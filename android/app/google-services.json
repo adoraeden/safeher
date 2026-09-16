@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "932880625767",
+    "project_id": "safeher-b43e6",
+    "storage_bucket": "safeher-b43e6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:932880625767:android:e85123a96c6132c13924c2",
+        "android_client_info": {
+          "package_name": "com.safeher.women_safety"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAX-1II6Gjw89uqH9VUK-AQ_ro5SoX9JIs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
