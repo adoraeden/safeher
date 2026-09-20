@@ -5,10 +5,14 @@ import '../utils/geo_utils.dart';
 import 'auth_helpers.dart';
 
 class IncidentService {
-  final _firestore = FirebaseFirestore.instance;
+  final FirebaseFirestore? firestore;
+
+  IncidentService({this.firestore});
+
+  FirebaseFirestore get _db => firestore ?? FirebaseFirestore.instance;
 
   CollectionReference<Map<String, dynamic>> get _reportsRef =>
-      _firestore.collection('incident_reports');
+      _db.collection('incident_reports');
 
   Stream<List<IncidentReport>> watchAllReports() {
     return _reportsRef
@@ -36,19 +40,31 @@ class IncidentService {
 
   Future<void> submitReport({
     required String type,
+    String? category,
     required String description,
+    String severity = 'medium',
+    bool isActive = true,
+    DateTime? occurredAt,
     double? lat,
     double? lng,
+    String? locationName,
+    String? additionalNotes,
   }) async {
     final uid = await requireUid();
     final report = IncidentReport(
       id: '',
       type: type,
+      category: category ?? type,
       description: description,
       lat: lat,
       lng: lng,
       timestamp: DateTime.now(),
       reporterId: uid,
+      severity: severity,
+      isActive: isActive,
+      occurredAt: occurredAt ?? DateTime.now(),
+      locationName: locationName,
+      additionalNotes: additionalNotes,
     );
     await _reportsRef.add(report.toMap());
   }

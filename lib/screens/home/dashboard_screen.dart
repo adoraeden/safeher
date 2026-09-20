@@ -147,10 +147,10 @@ class DashboardScreen extends StatelessWidget {
                         crossAxisSpacing: AppSpacing.sm,
                         children: [
                           _QuickActionCard(
-                            icon: Icons.podcasts_outlined,
+                            icon: Icons.share_location_outlined,
                             color: AppColors.warning,
-                            title: 'Live location',
-                            subtitle: 'Share ride / journey',
+                            title: 'Share location',
+                            subtitle: 'Share GPS / journey',
                             onTap: () => _openLiveLocation(context),
                           ),
                           _QuickActionCard(

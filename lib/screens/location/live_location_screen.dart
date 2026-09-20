@@ -1,24 +1,44 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-import '../../core/api_config.dart';
+import '../../models/emergency_contact.dart';
+import '../../services/contacts_service.dart';
 import '../../services/location_share_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
 
 class LiveLocationScreen extends StatefulWidget {
-  const LiveLocationScreen({super.key});
+  final LocationShareService? service;
+  final Stream<List<EmergencyContact>>? contactsStream;
+
+  const LiveLocationScreen({
+    super.key,
+    this.service,
+    this.contactsStream,
+  });
 
   @override
   State<LiveLocationScreen> createState() => _LiveLocationScreenState();
 }
 
 class _LiveLocationScreenState extends State<LiveLocationScreen> {
-  final _service = LocationShareService();
+  late final LocationShareService _service = widget.service ?? LocationShareService();
+  late final ContactsService _contactsService = ContactsService();
+
+  // Instant share state
+  Position? _currentPosition;
+  String? _currentMapUrl;
+  bool _isFetchingLocation = false;
+  String? _locationError;
+
+  // Timed session state
   Duration _selectedDuration = const Duration(minutes: 30);
-  bool _isStarting = false;
+  bool _isStartingTimed = false;
   String? _activeSessionId;
   DateTime? _expiresAt;
 
@@ -39,18 +59,203 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
   String _labelFor(Duration d) =>
       d.inHours >= 1 ? '${d.inHours} hr' : '${d.inMinutes} min';
 
-  Future<void> _start() async {
-    setState(() => _isStarting = true);
+  /// Fetches actual GPS latitude and longitude, generating a universal map URL.
+  Future<void> _fetchCurrentLocation({bool autoShare = false}) async {
+    setState(() {
+      _isFetchingLocation = true;
+      _locationError = null;
+    });
+
     try {
-      final name =
-          FirebaseAuth.instance.currentUser?.displayName ?? 'A SafeHer user';
+      final position = await _service.getCurrentLocation();
+      final url = LocationShareService.formatMapUrl(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (mounted) {
+        setState(() {
+          _currentPosition = position;
+          _currentMapUrl = url;
+          _isFetchingLocation = false;
+        });
+
+        if (autoShare) {
+          await _triggerNativeShare(url, position);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        final errorMsg = e.toString().replaceFirst('Exception: ', '');
+        setState(() {
+          _locationError = errorMsg;
+          _isFetchingLocation = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMsg),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+      }
+    }
+  }
+
+  String? get _currentUserName {
+    try {
+      return FirebaseAuth.instance.currentUser?.displayName;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Triggers the device's native sharing mechanism.
+  Future<void> _triggerNativeShare(String mapUrl, Position? pos) async {
+    final name = _currentUserName;
+    final text = LocationShareService.buildShareMessage(
+      latitude: pos?.latitude ?? 0.0,
+      longitude: pos?.longitude ?? 0.0,
+      name: name,
+    );
+
+    try {
+      // ignore: deprecated_member_use
+      await Share.share(
+        text,
+        subject: 'My Current Location - SafeHer',
+      );
+    } catch (_) {
+      // Graceful fallback to clipboard if native share sheet is unavailable on current platform
+      await Clipboard.setData(ClipboardData(text: mapUrl));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Native share unavailable. Map link copied to clipboard!'),
+          ),
+        );
+      }
+    }
+  }
+
+  /// Opens the universal map URL in Google Maps, Apple Maps, or the default browser.
+  Future<void> _openMapUrl(String url) async {
+    final uri = Uri.parse(url);
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open external map application.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error launching map: $e')),
+        );
+      }
+    }
+  }
+
+  /// Copies the clean map URL to the clipboard.
+  Future<void> _copyToClipboard(String url) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Map link copied to clipboard!')),
+      );
+    }
+  }
+
+  /// Opens native SMS app with recipient and prefilled message.
+  Future<void> _shareViaSms(EmergencyContact contact, String url) async {
+    final name = _currentUserName;
+    final text = LocationShareService.buildShareMessage(
+      latitude: _currentPosition?.latitude ?? 0.0,
+      longitude: _currentPosition?.longitude ?? 0.0,
+      name: name,
+    );
+    final cleanPhone = contact.phone.trim();
+    final smsUri = Uri(
+      scheme: 'sms',
+      path: cleanPhone,
+      queryParameters: {'body': text},
+    );
+
+    try {
+      if (await canLaunchUrl(smsUri)) {
+        await launchUrl(smsUri);
+      } else {
+        final fallbackUri = Uri.parse(
+          'sms:$cleanPhone?body=${Uri.encodeComponent(text)}',
+        );
+        await launchUrl(fallbackUri);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not launch SMS app: $e')),
+        );
+      }
+    }
+  }
+
+  /// Opens WhatsApp with recipient phone and prefilled message.
+  Future<void> _shareViaWhatsApp(EmergencyContact contact, String url) async {
+    final name = _currentUserName;
+    final text = LocationShareService.buildShareMessage(
+      latitude: _currentPosition?.latitude ?? 0.0,
+      longitude: _currentPosition?.longitude ?? 0.0,
+      name: name,
+    );
+    final cleanPhone = contact.phone.replaceAll(RegExp(r'[^0-9+]'), '');
+    final waUri = Uri.parse(
+      cleanPhone.isNotEmpty
+          ? 'https://wa.me/$cleanPhone?text=${Uri.encodeComponent(text)}'
+          : 'https://wa.me/?text=${Uri.encodeComponent(text)}',
+    );
+
+    try {
+      final launched = await launchUrl(
+        waUri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open WhatsApp.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open WhatsApp: $e')),
+        );
+      }
+    }
+  }
+
+  /// Starts a timed live location sharing session.
+  Future<void> _startTimedSharing() async {
+    setState(() => _isStartingTimed = true);
+    try {
+      final name = _currentUserName ?? 'A SafeHer user';
       final sessionId = await _service.startSharing(
         sharerName: name,
         duration: _selectedDuration,
       );
+      final initialPos = await _service.getCurrentLocation();
+      final url = LocationShareService.formatMapUrl(
+        initialPos.latitude,
+        initialPos.longitude,
+      );
+
       setState(() {
         _activeSessionId = sessionId;
         _expiresAt = DateTime.now().add(_selectedDuration);
+        _currentPosition = initialPos;
+        _currentMapUrl = url;
       });
     } catch (e) {
       if (mounted) {
@@ -63,11 +268,11 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _isStarting = false);
+      if (mounted) setState(() => _isStartingTimed = false);
     }
   }
 
-  Future<void> _stop() async {
+  Future<void> _stopTimedSharing() async {
     await _service.stopSharing();
     setState(() {
       _activeSessionId = null;
@@ -75,175 +280,530 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
     });
   }
 
-  String get _shareLink =>
-      '${ApiConfig.baseUrl}/share.html?id=$_activeSessionId';
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Live Location Sharing')),
-      body: Padding(
+      appBar: AppBar(title: const Text('Share Location')),
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.lg),
-        child: _activeSessionId == null ? _buildSetup() : _buildActive(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Section 1: Instant Share Current Location
+            _buildInstantShareCard(),
+
+            const SizedBox(height: AppSpacing.xl),
+
+            // Section 2: Share with Emergency Contacts
+            _buildEmergencyContactsSection(),
+
+            const SizedBox(height: AppSpacing.xl),
+
+            // Section 3: Timed Live Sharing (Continuous tracking)
+            _activeSessionId == null
+                ? _buildTimedSetupCard()
+                : _buildTimedActiveCard(),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildSetup() {
+  /// Card for fetching and sharing current GPS location immediately.
+  Widget _buildInstantShareCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                child: const Icon(
+                  Icons.my_location,
+                  color: AppColors.primaryLight,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Share Current Location',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    Text(
+                      'Sends real GPS coordinates as a universal map link',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          if (_locationError != null) ...[
+            const SizedBox(height: AppSpacing.md),
+            Container(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              decoration: BoxDecoration(
+                color: AppColors.danger.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: AppColors.danger.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: AppColors.danger, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _locationError!,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.dangerLight,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          if (_currentPosition != null && _currentMapUrl != null) ...[
+            const SizedBox(height: AppSpacing.md),
+            Container(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.check_circle,
+                        color: AppColors.success,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        'GPS: ${_currentPosition!.latitude.toStringAsFixed(6)}, ${_currentPosition!.longitude.toStringAsFixed(6)}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  SelectableText(
+                    _currentMapUrl!,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.primaryLight,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Universal link — opens directly in Google Maps, Apple Maps, or any browser.',
+                    style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.share, size: 16),
+                    label: const Text('Share'),
+                    onPressed: () => _triggerNativeShare(
+                      _currentMapUrl!,
+                      _currentPosition,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.copy, size: 18),
+                  tooltip: 'Copy Link',
+                  onPressed: () => _copyToClipboard(_currentMapUrl!),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  tooltip: 'Open in Maps',
+                  onPressed: () => _openMapUrl(_currentMapUrl!),
+                ),
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: AppSpacing.lg),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: _isFetchingLocation
+                    ? const SizedBox(
+                        height: 16,
+                        width: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.location_searching, size: 18),
+                label: Text(
+                  _isFetchingLocation
+                      ? 'Acquiring GPS location…'
+                      : 'Get & Share Current Location',
+                ),
+                onPressed: _isFetchingLocation
+                    ? null
+                    : () => _fetchCurrentLocation(autoShare: true),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Section displaying emergency contacts with direct SMS/WhatsApp share triggers.
+  Widget _buildEmergencyContactsSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Share your live location with anyone who has this link, for a limited time. Sharing stops automatically when time runs out, or the moment you leave this screen.',
+          'Share with Emergency Contacts',
           style: TextStyle(
-            fontSize: 13,
-            color: AppColors.textSecondary,
-            height: 1.4,
-          ),
-        ),
-        const SizedBox(height: AppSpacing.lg),
-        const Text(
-          'Share for how long?',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
             color: AppColors.textPrimary,
           ),
         ),
-        const SizedBox(height: AppSpacing.sm),
-        Wrap(
-          spacing: 8,
-          children: _durationOptions.map((d) {
-            final isSelected = d == _selectedDuration;
-            return ChoiceChip(
-              label: Text(_labelFor(d)),
-              selected: isSelected,
-              selectedColor: AppColors.primary,
-              backgroundColor: AppColors.surface,
-              side: const BorderSide(color: AppColors.border),
-              labelStyle: TextStyle(
-                color: isSelected ? Colors.white : AppColors.textPrimary,
-              ),
-              onSelected: (_) => setState(() => _selectedDuration = d),
-            );
-          }).toList(),
+        const SizedBox(height: 4),
+        const Text(
+          'Tap SMS or WhatsApp to open your messaging app with your location link prefilled. No messages are sent automatically in the background.',
+          style: TextStyle(
+            fontSize: 12,
+            color: AppColors.textSecondary,
+            height: 1.3,
+          ),
         ),
-        const SizedBox(height: AppSpacing.xl),
-        ElevatedButton(
-          onPressed: _isStarting ? null : _start,
-          child: _isStarting
-              ? const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: Colors.white,
+        const SizedBox(height: AppSpacing.sm),
+        StreamBuilder<List<EmergencyContact>>(
+          stream: widget.contactsStream ?? _contactsService.watchContacts(),
+          builder: (context, snapshot) {
+            final contacts = snapshot.data ?? [];
+            if (contacts.isEmpty) {
+              return Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: const Text(
+                  'No emergency contacts configured yet. Add trusted contacts in the Emergency Contacts tab to share with them quickly.',
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                ),
+              );
+            }
+
+            return ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: contacts.length,
+              separatorBuilder: (context, index) => const SizedBox(height: AppSpacing.xs),
+              itemBuilder: (context, index) {
+                final contact = contacts[index];
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.sm,
                   ),
-                )
-              : const Text('Start sharing'),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 16,
+                        backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+                        child: Text(
+                          contact.name.isNotEmpty
+                              ? contact.name[0].toUpperCase()
+                              : '?',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primaryLight,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              contact.name,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            Text(
+                              contact.phone,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(0, 32),
+                        ),
+                        icon: const Icon(Icons.sms_outlined, size: 14),
+                        label: const Text('SMS', style: TextStyle(fontSize: 11)),
+                        onPressed: () async {
+                          if (_currentMapUrl == null) {
+                            await _fetchCurrentLocation();
+                          }
+                          if (_currentMapUrl != null) {
+                            await _shareViaSms(contact, _currentMapUrl!);
+                          }
+                        },
+                      ),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(0, 32),
+                        ),
+                        icon: const Icon(Icons.chat_bubble_outline, size: 14),
+                        label: const Text('WhatsApp', style: TextStyle(fontSize: 11)),
+                        onPressed: () async {
+                          if (_currentMapUrl == null) {
+                            await _fetchCurrentLocation();
+                          }
+                          if (_currentMapUrl != null) {
+                            await _shareViaWhatsApp(contact, _currentMapUrl!);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
         ),
       ],
     );
   }
 
-  Widget _buildActive() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(AppSpacing.lg),
-          decoration: BoxDecoration(
-            color: AppColors.success.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: AppColors.success),
+  /// Setup card for timed continuous live sharing.
+  Widget _buildTimedSetupCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Timed Live Location Sharing',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          const SizedBox(height: 4),
+          const Text(
+            'Share your position continuously for a set duration. Live updates stop automatically when time runs out or when you stop it.',
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+              height: 1.3,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          const Text(
+            'Duration:',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Wrap(
+            spacing: 8,
+            children: _durationOptions.map((d) {
+              final isSelected = d == _selectedDuration;
+              return ChoiceChip(
+                label: Text(_labelFor(d)),
+                selected: isSelected,
+                selectedColor: AppColors.primary,
+                backgroundColor: AppColors.surface,
+                side: const BorderSide(color: AppColors.border),
+                labelStyle: TextStyle(
+                  color: isSelected ? Colors.white : AppColors.textPrimary,
+                ),
+                onSelected: (_) => setState(() => _selectedDuration = d),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: _isStartingTimed ? null : _startTimedSharing,
+              child: _isStartingTimed
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Start Timed Sharing'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Active card when timed sharing is ongoing.
+  Widget _buildTimedActiveCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.success),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              const Row(
-                children: [
-                  Icon(Icons.location_on, color: AppColors.success, size: 18),
-                  SizedBox(width: 8),
-                  Text(
-                    'Sharing your live location',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.success,
+              const Icon(Icons.sensors, color: AppColors.success, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Timed sharing is active',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.success,
+                      ),
+                    ),
+                    if (_expiresAt != null)
+                      Text(
+                        'Active until ${_expiresAt!.hour.toString().padLeft(2, '0')}:${_expiresAt!.minute.toString().padLeft(2, '0')}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (_currentMapUrl != null) ...[
+            const SizedBox(height: AppSpacing.md),
+            Container(
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: SelectableText(
+                _currentMapUrl!,
+                style: const TextStyle(fontSize: 11, color: AppColors.primaryLight),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.share, size: 16),
+                    label: const Text('Share Link'),
+                    onPressed: () => _triggerNativeShare(
+                      _currentMapUrl!,
+                      _currentPosition,
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Until ${_expiresAt!.hour.toString().padLeft(2, '0')}:${_expiresAt!.minute.toString().padLeft(2, '0')}',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppColors.textSecondary,
                 ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: AppSpacing.lg),
-        const Text(
-          'Share this link',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Container(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(AppRadius.md),
-            border: Border.all(color: AppColors.border),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _shareLink,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textPrimary,
-                  ),
+                const SizedBox(width: AppSpacing.sm),
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.copy, size: 18),
+                  onPressed: () => _copyToClipboard(_currentMapUrl!),
                 ),
-              ),
-              IconButton(
-                icon: const Icon(
-                  Icons.copy,
-                  size: 18,
-                  color: AppColors.primaryLight,
+                const SizedBox(width: AppSpacing.xs),
+                IconButton.filledTonal(
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  onPressed: () => _openMapUrl(_currentMapUrl!),
                 ),
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: _shareLink));
-                  ScaffoldMessenger.of(
-                    context,
-                  ).showSnackBar(const SnackBar(content: Text('Link copied')));
-                },
-              ),
-            ],
+              ],
+            ),
+          ],
+          const SizedBox(height: AppSpacing.lg),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: _stopTimedSharing,
+              child: const Text('Stop Sharing'),
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          'Works for anyone on the same network as your backend — send it via any messaging app you like.',
-          style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
-        ),
-        const SizedBox(height: AppSpacing.xl),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton(
-            onPressed: _stop,
-            child: const Text('Stop sharing'),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
