@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../models/emergency_event.dart';
@@ -73,5 +74,23 @@ class EmergencyService {
           'status': 'RESOLVED',
           'resolvedAt': DateTime.now().toIso8601String(),
         });
+  }
+
+  Stream<List<EmergencyEvent>> watchEvents() {
+    return FirebaseAuth.instance.authStateChanges().asyncExpand((user) {
+      if (user == null) return Stream.value(<EmergencyEvent>[]);
+      return _firestore
+          .collection('users')
+          .doc(user.uid)
+          .collection('emergency_events')
+          .orderBy('timestamp', descending: true)
+          .limit(10)
+          .snapshots()
+          .map(
+            (snapshot) => snapshot.docs
+                .map((doc) => EmergencyEvent.fromMap(doc.id, doc.data()))
+                .toList(),
+          );
+    });
   }
 }

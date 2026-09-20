@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../theme/app_colors.dart';
 import '../home/dashboard_screen.dart';
-import '../placeholder/placeholder_screen.dart';
+import '../assistant/ai_assistant_screen.dart';
+import '../profile/profile_screen.dart';
+import '../map/safety_map_screen.dart';
+import '../safety/safety_home_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -22,26 +25,10 @@ class _MainShellState extends State<MainShell> {
   Widget build(BuildContext context) {
     final screens = [
       DashboardScreen(onQuickAction: _goToTab),
-      const PlaceholderScreen(
-        title: 'Safety Map',
-        icon: Icons.map_outlined,
-        phaseNote: 'The safety map gets built in Phase 6.',
-      ),
-      const PlaceholderScreen(
-        title: 'AI Assistant',
-        icon: Icons.chat_bubble_outline,
-        phaseNote: 'The AI safety assistant gets built in Phase 5.',
-      ),
-      const PlaceholderScreen(
-        title: 'Safety',
-        icon: Icons.health_and_safety_outlined,
-        phaseNote: 'Safety tips and your safety plan get built in Phase 8.',
-      ),
-      const PlaceholderScreen(
-        title: 'Profile',
-        icon: Icons.person_outline,
-        phaseNote: 'Profile and settings get built in Phase 3.',
-      ),
+      const SafetyMapScreen(),
+      const AiAssistantScreen(),
+      const SafetyHomeScreen(),
+      const ProfileScreen(),
     ];
 
     return Scaffold(

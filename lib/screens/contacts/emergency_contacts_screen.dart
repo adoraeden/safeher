@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../../models/emergency_contact.dart';
+import '../../models/emergency_event.dart';
 import '../../services/contacts_service.dart';
+import '../../services/emergency_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
+import '../sos/sos_active_screen.dart';
 
 class EmergencyContactsScreen extends StatefulWidget {
   const EmergencyContactsScreen({super.key});
@@ -16,6 +19,8 @@ class EmergencyContactsScreen extends StatefulWidget {
 
 class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
   final _contactsService = ContactsService();
+  final _emergencyService = EmergencyService();
+  bool _isTriggering = false;
 
   void _openContactForm({EmergencyContact? existing}) {
     showModalBottomSheet(
@@ -67,17 +72,38 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
     );
   }
 
+  Future<void> _triggerSosNow() async {
+    setState(() => _isTriggering = true);
+    try {
+      final event = await _emergencyService.triggerSos();
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => SosActiveScreen(event: event)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isTriggering = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Emergency Contacts')),
       body: StreamBuilder<List<EmergencyContact>>(
         stream: _contactsService.watchContacts(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+        builder: (context, contactsSnapshot) {
+          if (contactsSnapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          final contacts = snapshot.data ?? [];
+          final contacts = contactsSnapshot.data ?? [];
 
           return SingleChildScrollView(
             padding: const EdgeInsets.all(AppSpacing.lg),
@@ -85,31 +111,70 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'These contacts receive a demo alert with your live location whenever you activate SOS.',
+                  'TRUSTED SAFETY CIRCLE',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.primaryLight,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Emergency Contacts & SOS Hub',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Configure who receives an automated demo alert with your live location whenever you activate SOS.',
                   style: TextStyle(
                     fontSize: 13,
                     color: AppColors.textSecondary,
                     height: 1.4,
                   ),
                 ),
-                const SizedBox(height: AppSpacing.lg),
+                const SizedBox(height: AppSpacing.md),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      'Your emergency circle (${contacts.length})',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _isTriggering ? null : _triggerSosNow,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.danger,
+                        ),
+                        child: _isTriggering
+                            ? const SizedBox(
+                                height: 16,
+                                width: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text('Trigger SOS now'),
                       ),
                     ),
-                    TextButton.icon(
-                      onPressed: () => _openContactForm(),
-                      icon: const Icon(Icons.add, size: 18),
-                      label: const Text('Add'),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => _openContactForm(),
+                        child: const Text('Add contact'),
+                      ),
                     ),
                   ],
+                ),
+                const SizedBox(height: AppSpacing.xl),
+                Text(
+                  'Your emergency circle (${contacts.length})',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
                 ),
                 const SizedBox(height: AppSpacing.md),
                 if (contacts.isEmpty)
@@ -125,6 +190,81 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
                       ),
                     ),
                   ),
+                const SizedBox(height: AppSpacing.xl),
+                const Row(
+                  children: [
+                    Icon(
+                      Icons.history,
+                      size: 16,
+                      color: AppColors.textSecondary,
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      'Past emergency activations',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                StreamBuilder<List<EmergencyEvent>>(
+                  stream: _emergencyService.watchEvents(),
+                  builder: (context, eventsSnapshot) {
+                    final events = eventsSnapshot.data ?? [];
+                    if (events.isEmpty) {
+                      return const Text(
+                        'No SOS activations yet.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      );
+                    }
+                    return Column(
+                      children: events
+                          .map(
+                            (e) => Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.all(AppSpacing.sm),
+                              decoration: BoxDecoration(
+                                color: AppColors.surface,
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.md,
+                                ),
+                                border: Border.all(color: AppColors.border),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    e.status == 'ACTIVE'
+                                        ? Icons.error
+                                        : Icons.check_circle,
+                                    size: 16,
+                                    color: e.status == 'ACTIVE'
+                                        ? AppColors.dangerLight
+                                        : AppColors.success,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      '${e.status} — ${e.timestamp.day}/${e.timestamp.month} ${e.timestamp.hour.toString().padLeft(2, '0')}:${e.timestamp.minute.toString().padLeft(2, '0')}',
+                                      style: const TextStyle(
+                                        fontSize: 12,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    );
+                  },
+                ),
               ],
             ),
           );
@@ -354,7 +494,7 @@ class _ContactFormSheetState extends State<_ContactFormSheet> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Could not save: ' + e.toString().replaceFirst('Exception: ', ''),
+              'Could not save: ${e.toString().replaceFirst('Exception: ', '')}',
             ),
           ),
         );
