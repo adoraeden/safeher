@@ -456,37 +456,74 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
     super.dispose();
   }
 
-  Future<void> _toggle(bool value) async {
-    if (value) {
-      setState(() => _isStarting = true);
-      final started = await _voiceGuard.start(
-        triggerPhrases: widget.triggerPhrases,
-        onTriggerDetected: () {
+  @override
+  void didUpdateWidget(covariant _VoiceGuardCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_isOn &&
+        oldWidget.triggerPhrases.join(',') != widget.triggerPhrases.join(',')) {
+      _restartWithUpdatedPhrases();
+    }
+  }
+
+  Future<void> _restartWithUpdatedPhrases() async {
+    _voiceGuard.stop();
+    await _startVoiceGuard();
+  }
+
+  Future<void> _startVoiceGuard() async {
+    setState(() => _isStarting = true);
+    final started = await _voiceGuard.start(
+      triggerPhrases: widget.triggerPhrases,
+      onTriggerDetected: () async {
+        if (mounted) {
+          setState(() => _isOn = false);
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const VoiceTriggerConfirmScreen(),
+            ),
+          );
           if (mounted) {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const VoiceTriggerConfirmScreen(),
-              ),
-            );
+            setState(() => _isOn = _voiceGuard.isActive);
           }
-        },
-      );
-      if (mounted) {
-        setState(() {
-          _isOn = started;
-          _isStarting = false;
-        });
-        if (!started) {
+        }
+      },
+      onError: (errorMsg) {
+        if (mounted) {
+          setState(() {
+            _isOn = false;
+            _isStarting = false;
+          });
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Add a trigger phrase in Profile, and allow microphone access.',
-              ),
+            SnackBar(
+              content: Text(errorMsg),
+              backgroundColor: AppColors.danger,
             ),
           );
         }
+      },
+    );
+
+    if (mounted) {
+      setState(() {
+        _isOn = started;
+        _isStarting = false;
+      });
+      if (!started && widget.triggerPhrases.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Please add at least one trigger phrase in Profile & Settings.',
+            ),
+          ),
+        );
       }
+    }
+  }
+
+  Future<void> _toggle(bool value) async {
+    if (value) {
+      await _startVoiceGuard();
     } else {
       _voiceGuard.stop();
       setState(() => _isOn = false);
@@ -523,7 +560,7 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
                 ),
                 Text(
                   _isOn
-                      ? 'Listening for ${widget.triggerPhrases.length} phrase${widget.triggerPhrases.length == 1 ? '' : 's'}'
+                      ? 'Active — listening for ${widget.triggerPhrases.length} trigger phrase${widget.triggerPhrases.length == 1 ? '' : 's'}'
                       : 'Off — say a saved phrase to trigger SOS hands-free',
                   style: const TextStyle(
                     fontSize: 11,
@@ -542,7 +579,7 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
               : Switch(
                   value: _isOn,
                   onChanged: _toggle,
-                  activeColor: AppColors.primary,
+                  activeThumbColor: AppColors.primary,
                 ),
         ],
       ),

@@ -9,6 +9,9 @@ class UserProfile {
     required this.voiceTriggerPhrases,
   });
 
+  String get voiceTriggerPhrase =>
+      voiceTriggerPhrases.isNotEmpty ? voiceTriggerPhrases.first : 'SafeHer help me';
+
   factory UserProfile.fromMap(Map<String, dynamic> map) {
     List<String> phrases;
     if (map['voiceTriggerPhrases'] is List) {

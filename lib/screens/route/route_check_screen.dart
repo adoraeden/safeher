@@ -62,8 +62,9 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
   }
 
   Future<void> _checkRoute() async {
-    if (_currentLocation == null || _destinationController.text.trim().isEmpty)
+    if (_currentLocation == null || _destinationController.text.trim().isEmpty) {
       return;
+    }
     setState(() {
       _isChecking = true;
       _error = null;
@@ -73,10 +74,11 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
       final destination = await _routeService.geocodeAddress(
         _destinationController.text.trim(),
       );
-      if (destination == null)
+      if (destination == null) {
         throw Exception(
           'Could not find that destination. Try a more specific address.',
         );
+      }
       final result = await _routeService.checkRoute(
         from: _currentLocation!,
         to: destination,

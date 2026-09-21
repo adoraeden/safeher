@@ -78,7 +78,7 @@ class SafetyTipsScreen extends StatelessWidget {
       body: ListView.separated(
         padding: const EdgeInsets.all(AppSpacing.lg),
         itemCount: _categories.length,
-        separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.md),
+        separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.md),
         itemBuilder: (context, index) {
           final category = _categories[index];
           return Theme(

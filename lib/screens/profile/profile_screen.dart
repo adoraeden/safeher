@@ -106,13 +106,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           TextButton(
             onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
               Navigator.pop(context);
               try {
                 await _profileService.deleteAccount();
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
+                  messenger.showSnackBar(
+                    const SnackBar(
                       content: Text(
                         'Could not delete — try signing out and back in, then retry.',
                       ),

@@ -66,5 +66,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>SafeHer needs microphone access to listen for your voice trigger phrase to activate emergency SOS hands-free.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>SafeHer needs speech recognition to detect emergency trigger phrases when Voice Guard is enabled.</string>
 </dict>
 </plist>
