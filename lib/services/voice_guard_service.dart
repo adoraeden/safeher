@@ -1,22 +1,64 @@
 import 'dart:async';
+import 'dart:io' show Platform;
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_recognition_error.dart';
 
-/// Intelligent phrase normalization and matcher for Voice Guard.
+/// Controls the native Android microphone foreground service.
+///
+/// IMPORTANT — Android background limitation:
+/// The [stt.SpeechToText] plugin relies on Android's SpeechRecognizer API,
+/// which requires a live Activity context. When the user presses Home, Android
+/// may eventually suspend the Flutter Activity (though not kill the process if
+/// a foreground service is running). While the process stays alive, speech
+/// recognition continues. However, if Android force-stops or kills the process,
+/// recognition will stop. This is an OS-level restriction that cannot be
+/// bypassed by the app. The native foreground microphone service keeps the
+/// process at elevated priority, making it much less likely to be killed.
+class ForegroundServiceHelper {
+  static const _channel =
+      MethodChannel('com.safeher.women_safety/voice_guard_service');
+
+  static Future<void> startMicrophoneService() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('startService');
+      debugPrint(
+          '[ForegroundServiceHelper] Native microphone foreground service started');
+    } catch (e) {
+      debugPrint(
+          '[ForegroundServiceHelper] Failed to start native foreground service: $e');
+    }
+  }
+
+  static Future<void> stopMicrophoneService() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod('stopService');
+      debugPrint(
+          '[ForegroundServiceHelper] Native microphone foreground service stopped');
+    } catch (e) {
+      debugPrint(
+          '[ForegroundServiceHelper] Failed to stop native foreground service: $e');
+    }
+  }
+}
+
+/// Normalizes text and matches trigger phrases with fuzzy/phonetic tolerance.
 class VoiceTriggerMatcher {
-  /// Normalize text: lowercase, remove punctuation, collapse whitespace.
   static String normalize(String text) {
     if (text.isEmpty) return '';
     return text
         .toLowerCase()
-        .replaceAll(RegExp(r'''[.,\/#!$%\^&\*;:{}=\-_`~()?"'’“”\[\]\\]'''), ' ')
+        .replaceAll(
+            RegExp(r'''[.,\/#!$%\^\&\*;:{}=\-_`~()?"''""\[\]\\]'''), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }
 
-  /// Simplifies common suffixes ('ed', 's', 'ing') to assist acoustic matching.
   static String stemWord(String word) {
     if (word.endsWith('ing') && word.length > 5) {
       return word.substring(0, word.length - 3);
@@ -30,50 +72,58 @@ class VoiceTriggerMatcher {
     return word;
   }
 
-  /// Expands trigger phrases with phonetic and compound word variants
-  /// (e.g. "SafeHer" <-> "safe her" <-> "save her").
+  /// Phonetic / homophonic variants for "SafeHer" and similar app-specific words.
   static List<String> generateVariants(String phrase) {
     final norm = normalize(phrase);
     if (norm.isEmpty) return [];
 
     final variants = <String>{norm};
 
-    if (norm.contains('safeher')) {
-      variants.add(norm.replaceAll('safeher', 'safe her'));
-      variants.add(norm.replaceAll('safeher', 'save her'));
-    }
-    if (norm.contains('safe her')) {
-      variants.add(norm.replaceAll('safe her', 'safeher'));
-      variants.add(norm.replaceAll('safe her', 'save her'));
-    }
-    if (norm.contains('save her')) {
-      variants.add(norm.replaceAll('save her', 'safeher'));
-      variants.add(norm.replaceAll('save her', 'safe her'));
+    const safeHerEquivalents = [
+      'safeher',
+      'safe her',
+      'save her',
+      'safer',
+      'safe here',
+      'safe hair',
+      'save here',
+      'safe hear',
+    ];
+
+    for (final eq in safeHerEquivalents) {
+      if (norm.contains(eq)) {
+        for (final target in safeHerEquivalents) {
+          variants.add(norm.replaceAll(eq, target));
+        }
+      }
     }
 
     return variants.toList();
   }
 
-  /// Checks if [heardText] matches any phrase in [triggerPhrases].
-  /// Matches contiguous word sequences, tolerates reasonable speech-recognition
-  /// transcription variations, and guards against false positives in long conversations.
-  static bool matches(String heardText, List<String> triggerPhrases) {
+  /// Returns the matched trigger phrase string, or null.
+  static String? findMatch(String heardText, List<String> triggerPhrases) {
     final heardNorm = normalize(heardText);
-    if (heardNorm.isEmpty) return false;
+    if (heardNorm.isEmpty) return null;
 
-    final heardWords = heardNorm.split(' ').where((w) => w.isNotEmpty).toList();
-    if (heardWords.isEmpty) return false;
+    final heardWords =
+        heardNorm.split(' ').where((w) => w.isNotEmpty).toList();
+    if (heardWords.isEmpty) return null;
 
     for (final phrase in triggerPhrases) {
       final variants = generateVariants(phrase);
       for (final variant in variants) {
         if (_matchSingleVariant(heardNorm, heardWords, variant)) {
-          return true;
+          return phrase;
         }
       }
     }
 
-    return false;
+    return null;
+  }
+
+  static bool matches(String heardText, List<String> triggerPhrases) {
+    return findMatch(heardText, triggerPhrases) != null;
   }
 
   static bool _matchSingleVariant(
@@ -81,39 +131,32 @@ class VoiceTriggerMatcher {
     List<String> heardWords,
     String variant,
   ) {
-    final phraseWords = variant.split(' ').where((w) => w.isNotEmpty).toList();
+    final phraseWords =
+        variant.split(' ').where((w) => w.isNotEmpty).toList();
     if (phraseWords.isEmpty) return false;
 
-    // 1. Single-word trigger handling
+    // Single-word trigger — only match in short utterances to avoid false alarms.
     if (phraseWords.length == 1) {
       final target = phraseWords.first;
-      // In long casual utterances, ignore isolated single-word triggers to prevent false alarms
-      if (heardWords.length > 4) {
-        return false;
-      }
-      return heardWords.any((w) =>
-          w == target ||
-          stemWord(w) == target ||
-          _isWordClose(w, target));
+      if (heardWords.length > 5) return false;
+      return heardWords
+          .any((w) => w == target || stemWord(w) == target || _isWordClose(w, target));
     }
 
-    // 2. Direct contiguous exact substring with word boundaries (for multi-word phrases)
+    // Direct exact contiguous match.
     final pattern = RegExp('(^|\\s)${RegExp.escape(variant)}(\$|\\s)');
-    if (pattern.hasMatch(heardNorm)) {
-      return true;
-    }
+    if (pattern.hasMatch(heardNorm)) return true;
 
-    // 3. Multi-word triggers: sliding window search across heardWords
+    // Sliding window with 1-word tolerance.
     final phraseLen = phraseWords.length;
-    // Allow window size = phraseLen, or phraseLen + 1 (tolerates 1 filler word e.g. "please", "uh")
-    for (int wSize = phraseLen;
-        wSize <= phraseLen + 1 && wSize <= heardWords.length;
-        wSize++) {
+    for (
+      int wSize = phraseLen;
+      wSize <= phraseLen + 1 && wSize <= heardWords.length;
+      wSize++
+    ) {
       for (int i = 0; i <= heardWords.length - wSize; i++) {
         final window = heardWords.sublist(i, i + wSize);
-        if (_windowMatchesPhrase(window, phraseWords)) {
-          return true;
-        }
+        if (_windowMatchesPhrase(window, phraseWords)) return true;
       }
     }
 
@@ -121,7 +164,9 @@ class VoiceTriggerMatcher {
   }
 
   static bool _windowMatchesPhrase(
-      List<String> window, List<String> phraseWords) {
+    List<String> window,
+    List<String> phraseWords,
+  ) {
     int pIdx = 0;
     int mismatches = 0;
 
@@ -129,7 +174,6 @@ class VoiceTriggerMatcher {
       if (pIdx < phraseWords.length) {
         final wWord = window[wIdx];
         final pWord = phraseWords[pIdx];
-
         if (wWord == pWord ||
             stemWord(wWord) == stemWord(pWord) ||
             _isWordClose(wWord, pWord)) {
@@ -142,7 +186,6 @@ class VoiceTriggerMatcher {
       }
     }
 
-    // All phrase words matched in sequence, with at most 1 filler/mismatched word in window
     return pIdx == phraseWords.length && mismatches <= 1;
   }
 
@@ -165,11 +208,8 @@ class VoiceTriggerMatcher {
       v1[0] = i + 1;
       for (int j = 0; j < t.length; j++) {
         final cost = (s[i] == t[j]) ? 0 : 1;
-        v1[j + 1] = [
-          v1[j] + 1,
-          v0[j + 1] + 1,
-          v0[j] + cost,
-        ].reduce((min, val) => val < min ? val : min);
+        v1[j + 1] = [v1[j] + 1, v0[j + 1] + 1, v0[j] + cost]
+            .reduce((min, val) => val < min ? val : min);
       }
       for (int j = 0; j <= t.length; j++) {
         v0[j] = v1[j];
@@ -180,27 +220,52 @@ class VoiceTriggerMatcher {
 }
 
 class VoiceGuardService {
+  VoiceGuardService._internal();
+  static final VoiceGuardService _instance = VoiceGuardService._internal();
+  factory VoiceGuardService() => _instance;
+
   final stt.SpeechToText _speech = stt.SpeechToText();
+
   bool _isActive = false;
   bool _isListening = false;
   bool _isStarting = false;
+  bool _isPaused = false;
+
+  String? _preferredLocaleId;
   List<String> _triggerPhrases = [];
-  void Function()? _onTriggerDetected;
+
+  void Function(String matchedPhrase)? _onTriggerDetected;
   void Function(String status)? _onStatusChanged;
   void Function(String errorMessage)? _onError;
 
   Timer? _restartDebounceTimer;
+  Timer? _watchdogTimer;
+
   DateTime? _lastTriggerTime;
 
+  // Consecutive error tracking — resets on each successful 'listening' status.
+  int _consecutiveErrorCount = 0;
+  static const int _maxConsecutiveErrors = 15;
+
+  // ── Public state getters ──────────────────────────────────────────────────
   bool get isActive => _isActive;
   bool get isListening => _isListening;
+  bool get isPaused => _isPaused;
+
+  // ── Public API ────────────────────────────────────────────────────────────
 
   Future<bool> start({
     required List<String> triggerPhrases,
-    required void Function() onTriggerDetected,
+    required void Function(String matchedPhrase) onTriggerDetected,
     void Function(String status)? onStatusChanged,
     void Function(String errorMessage)? onError,
   }) async {
+    // If already running, stop cleanly before restarting.
+    if (_isActive) {
+      stop();
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+
     _triggerPhrases = triggerPhrases
         .map((p) => p.trim())
         .where((p) => p.isNotEmpty)
@@ -208,6 +273,8 @@ class VoiceGuardService {
     _onTriggerDetected = onTriggerDetected;
     _onStatusChanged = onStatusChanged;
     _onError = onError;
+    _isPaused = false;
+    _consecutiveErrorCount = 0;
 
     if (_triggerPhrases.isEmpty) {
       debugPrint('[VoiceGuard] Start aborted: triggerPhrases is empty');
@@ -222,6 +289,23 @@ class VoiceGuardService {
         onError: _handleError,
         debugLogging: false,
       );
+
+      if (available) {
+        final locales = await _speech.locales();
+        // Prefer en_IN for Indian users, then any English, then first available.
+        final enLocale = locales.firstWhere(
+          (l) => l.localeId.startsWith('en_IN'),
+          orElse: () => locales.firstWhere(
+            (l) => l.localeId.startsWith('en_'),
+            orElse: () => locales.isNotEmpty
+                ? locales.first
+                : stt.LocaleName('en_US', 'English'),
+          ),
+        );
+        _preferredLocaleId = enLocale.localeId;
+        debugPrint(
+            '[VoiceGuard] Selected speech recognition locale: $_preferredLocaleId');
+      }
     } catch (e) {
       debugPrint('[VoiceGuard] Initialization exception: $e');
       _onError?.call('Microphone or speech service unavailable: $e');
@@ -229,30 +313,88 @@ class VoiceGuardService {
     }
 
     if (!available) {
-      debugPrint('[VoiceGuard] Speech recognition not available or permission denied');
-      _onError?.call('Microphone permission denied or speech service not available');
+      debugPrint('[VoiceGuard] Speech recognition not available');
+      _onError?.call(
+          'Microphone permission denied or speech service not available');
       return false;
     }
 
+    // Start native Android foreground service to keep process alive in background.
+    await ForegroundServiceHelper.startMicrophoneService();
+
     _isActive = true;
     _startListening();
+    _startWatchdog();
     return true;
   }
 
+  void pause() {
+    if (!_isActive) return;
+    debugPrint('[VoiceGuard] Pausing listening');
+    _isPaused = true;
+    _restartDebounceTimer?.cancel();
+    _speech.stop();
+    _isListening = false;
+  }
+
+  void resume() {
+    if (!_isActive || !_isPaused) return;
+    debugPrint('[VoiceGuard] Resuming listening');
+    _isPaused = false;
+    _consecutiveErrorCount = 0;
+    _scheduleRestart(delayMillis: 300);
+  }
+
+  void stop() {
+    debugPrint('[VoiceGuard] Stopping and releasing microphone');
+    _isActive = false;
+    _isListening = false;
+    _isStarting = false;
+    _isPaused = false;
+    _restartDebounceTimer?.cancel();
+    _watchdogTimer?.cancel();
+    _speech.stop();
+    _onStatusChanged?.call('stopped');
+    ForegroundServiceHelper.stopMicrophoneService();
+  }
+
+  // ── Internal lifecycle ────────────────────────────────────────────────────
+
+  /// Watchdog that rescues a silently-stopped recognizer.
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!_isActive || _isPaused) return;
+      if (!_speech.isListening && !_isStarting) {
+        debugPrint(
+            '[VoiceGuard Watchdog] Recognizer is idle but guard is active — restarting');
+        _startListening();
+      }
+    });
+  }
+
   void _startListening() async {
-    if (!_isActive || _isStarting || _speech.isListening) return;
+    if (!_isActive || _isPaused || _isStarting) return;
+    if (_speech.isListening) return;
 
     _isStarting = true;
     _restartDebounceTimer?.cancel();
 
-    debugPrint('[VoiceGuard] Starting listen session in dictation mode...');
+    debugPrint('[VoiceGuard] Starting listen session...');
     try {
+      // ── Listen parameters ────────────────────────────────────────────────
+      // listenFor: 60 s  → fewer session restarts = fewer OS beep sounds
+      // pauseFor:  6 s   → tolerates silence gaps without killing session
+      // listenMode: dictation → keeps session open through multiple words
+      // partialResults: true → catch phrase even if final result is delayed
+      // cancelOnError: false → let our handler decide what to do on error
       final options = stt.SpeechListenOptions(
         listenMode: stt.ListenMode.dictation,
         partialResults: true,
         cancelOnError: false,
-        pauseFor: const Duration(seconds: 5),
-        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 6),
+        listenFor: const Duration(seconds: 60),
+        localeId: _preferredLocaleId,
       );
 
       await _speech.listen(
@@ -261,106 +403,119 @@ class VoiceGuardService {
       );
     } catch (e) {
       debugPrint('[VoiceGuard] Error starting listen: $e');
-      _scheduleRestart(delayMillis: 600);
+      _scheduleRestart(delayMillis: 500);
     } finally {
       _isStarting = false;
     }
   }
 
   void _handleStatus(String status) {
-    debugPrint('[VoiceGuard] Status update: $status');
-    if (status == 'listening') {
-      _isListening = true;
-      _onStatusChanged?.call('listening');
-    } else if (status == 'notListening' || status == 'done') {
-      _isListening = false;
-      _onStatusChanged?.call(status);
-      if (_isActive) {
-        // Debounce restart so native audio hardware tears down cleanly (350ms delay)
-        _scheduleRestart(delayMillis: 350);
-      }
+    debugPrint('[VoiceGuard] Status: $status');
+    switch (status) {
+      case 'listening':
+        _isListening = true;
+        _consecutiveErrorCount = 0;
+        _onStatusChanged?.call('listening');
+        break;
+      case 'notListening':
+      case 'done':
+        _isListening = false;
+        _onStatusChanged?.call(status);
+        // Session ended naturally (e.g. listenFor or pauseFor expired).
+        // Restart to keep listening continuously.
+        if (_isActive && !_isPaused) {
+          // Small delay to let the recognizer fully release resources.
+          _scheduleRestart(delayMillis: 200);
+        }
+        break;
     }
   }
 
   void _handleError(SpeechRecognitionError error) {
-    debugPrint('[VoiceGuard] Recognition error: ${error.errorMsg} (permanent: ${error.permanent})');
-    if (!_isActive) return;
+    debugPrint(
+        '[VoiceGuard] Error: ${error.errorMsg} (permanent=${error.permanent})');
+    if (!_isActive || _isPaused) return;
+
+    // NOTE: On Android, error.permanent is ALWAYS true regardless of severity.
+    // We therefore NEVER use it to decide whether to shut down.
+    _isListening = false;
 
     final msg = error.errorMsg.toLowerCase();
-    final isTransient = !error.permanent ||
-        msg.contains('timeout') ||
-        msg.contains('no_match') ||
-        msg.contains('busy') ||
-        msg.contains('network') ||
-        msg.contains('speech');
 
-    if (isTransient) {
-      // Recover automatically from silence, timeouts, or transient busy states
-      final delay = msg.contains('busy') ? 600 : 350;
-      _scheduleRestart(delayMillis: delay);
+    // Normal silence / no speech detected → short delay restart.
+    if (msg.contains('no_match') ||
+        msg.contains('speech_timeout') ||
+        msg.contains('timeout')) {
+      _scheduleRestart(delayMillis: 200);
+      return;
+    }
+
+    // Hardware busy / another app took the mic → wait longer.
+    if (msg.contains('busy') || msg.contains('client')) {
+      _scheduleRestart(delayMillis: 800);
+      return;
+    }
+
+    // Audio / network / server errors — transient, backoff.
+    _consecutiveErrorCount++;
+    if (_consecutiveErrorCount > _maxConsecutiveErrors) {
+      debugPrint(
+          '[VoiceGuard] Many consecutive errors ($_consecutiveErrorCount) — longer backoff, then reset');
+      _consecutiveErrorCount = 0;
+      _scheduleRestart(delayMillis: 3000);
     } else {
-      debugPrint('[VoiceGuard] Permanent error encountered: ${error.errorMsg}');
-      _onError?.call(error.errorMsg);
+      final delay = 300 + (_consecutiveErrorCount * 100).clamp(0, 1000);
+      _scheduleRestart(delayMillis: delay);
     }
   }
 
-  void _scheduleRestart({int delayMillis = 350}) {
-    if (!_isActive) return;
+  void _scheduleRestart({int delayMillis = 200}) {
+    if (!_isActive || _isPaused) return;
     _restartDebounceTimer?.cancel();
     _restartDebounceTimer = Timer(Duration(milliseconds: delayMillis), () {
-      if (_isActive && !_speech.isListening && !_isStarting) {
-        debugPrint('[VoiceGuard] Executing scheduled restart cycle');
+      if (_isActive && !_isPaused && !_speech.isListening && !_isStarting) {
         _startListening();
       }
     });
   }
 
   void _handleResult(SpeechRecognitionResult result) {
-    if (!_isActive) return;
+    if (!_isActive || _isPaused) return;
+    if (result.recognizedWords.isEmpty) return;
 
+    // Prevent duplicate triggers within 5 seconds of the last confirmed trigger.
     final now = DateTime.now();
-    // Guard against repeated trigger callbacks for the same utterance
     if (_lastTriggerTime != null &&
-        now.difference(_lastTriggerTime!).inMilliseconds < 4000) {
-      debugPrint('[VoiceGuard] Trigger cooldown active, ignoring result');
+        now.difference(_lastTriggerTime!).inMilliseconds < 5000) {
       return;
     }
 
-    final candidates = <String>[];
-    if (result.recognizedWords.isNotEmpty) {
-      candidates.add(result.recognizedWords);
-    }
+    // Collect the primary transcript + any alternatives.
+    final candidates = <String>{result.recognizedWords};
     for (final alt in result.alternates) {
-      if (alt.recognizedWords.isNotEmpty &&
-          !candidates.contains(alt.recognizedWords)) {
+      if (alt.recognizedWords.isNotEmpty) {
         candidates.add(alt.recognizedWords);
       }
     }
 
-    if (candidates.isEmpty) return;
+    debugPrint(
+        '[VoiceGuard] Transcript (final=${result.finalResult}): $candidates');
 
-    debugPrint('[VoiceGuard] Transcript (final: ${result.finalResult}, conf: ${result.confidence.toStringAsFixed(2)}): "$candidates"');
-
-    final matched = candidates.any((c) => VoiceTriggerMatcher.matches(c, _triggerPhrases));
-    if (matched) {
-      _lastTriggerTime = now;
-      debugPrint('[VoiceGuard] *** TRIGGER PHRASE CONFIRMED in $candidates! Activating SOS. ***');
-
-      // Stop listening immediately to release microphone and prevent multiple activations
-      stop();
-
-      // Trigger existing SOS flow
-      _onTriggerDetected?.call();
+    String? matchedPhrase;
+    for (final c in candidates) {
+      final match = VoiceTriggerMatcher.findMatch(c, _triggerPhrases);
+      if (match != null) {
+        matchedPhrase = match;
+        break;
+      }
     }
-  }
 
-  void stop() {
-    debugPrint('[VoiceGuard] Stopping Voice Guard and releasing microphone');
-    _isActive = false;
-    _isListening = false;
-    _isStarting = false;
-    _restartDebounceTimer?.cancel();
-    _speech.stop();
-    _onStatusChanged?.call('stopped');
+    if (matchedPhrase != null) {
+      _lastTriggerTime = now;
+      debugPrint(
+          '[VoiceGuard] *** TRIGGER DETECTED: "$matchedPhrase" *** pausing for countdown');
+      pause();
+      _onTriggerDetected?.call(matchedPhrase);
+    }
   }
 }

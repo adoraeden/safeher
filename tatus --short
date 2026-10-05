@@ -1,0 +1,39 @@
+warning: in the working copy of 'android/app/src/main/AndroidManifest.xml', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/models/emergency_event.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/models/user_profile.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/screens/main/auth_gate.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/screens/main/main_shell.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/screens/profile/profile_screen.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/screens/sos/voice_trigger_confirm_screen.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/services/profile_service.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'lib/services/voice_guard_service.dart', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'linux/flutter/generated_plugin_registrant.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'linux/flutter/generated_plugins.cmake', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'macos/Flutter/GeneratedPluginRegistrant.swift', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'pubspec.lock', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'windows/flutter/generated_plugin_registrant.cc', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'windows/flutter/generated_plugins.cmake', LF will be replaced by CRLF the next time Git touches it
+ android/app/build.gradle.kts                       |   4 [32m+[m
+ android/app/src/main/AndroidManifest.xml           |  11 [32m+[m[31m-[m
+ .../com/safeher/women_safety/MainActivity.kt       |  46 [32m+[m[31m-[m
+ lib/core/api_config.dart                           |   7 [32m+[m[31m-[m
+ lib/main.dart                                      |   2 [32m+[m
+ lib/models/emergency_event.dart                    |  16 [32m+[m
+ lib/models/user_profile.dart                       |  72 [32m++[m[31m-[m
+ lib/screens/assistant/ai_assistant_screen.dart     |  37 [32m+[m[31m-[m
+ lib/screens/home/dashboard_screen.dart             | 317 [32m+++++++++[m[31m--[m
+ lib/screens/main/auth_gate.dart                    |  35 [32m+[m[31m-[m
+ lib/screens/main/main_shell.dart                   |  12 [32m+[m[31m-[m
+ lib/screens/profile/profile_screen.dart            | 578 [32m++++++++++++++++[m[31m-----[m
+ lib/screens/sos/voice_trigger_confirm_screen.dart  | 163 [32m++++[m[31m--[m
+ lib/services/emergency_service.dart                |   7 [32m+[m[31m-[m
+ lib/services/profile_service.dart                  |  22 [32m+[m[31m-[m
+ lib/services/voice_guard_service.dart              | 407 [32m++++++++++[m[31m-----[m
+ linux/flutter/generated_plugin_registrant.cc       |   4 [32m+[m
+ linux/flutter/generated_plugins.cmake              |   1 [32m+[m
+ macos/Flutter/GeneratedPluginRegistrant.swift      |   4 [32m+[m
+ pubspec.lock                                       | 130 [32m++++[m[31m-[m
+ pubspec.yaml                                       |   5 [32m+[m
+ windows/flutter/generated_plugin_registrant.cc     |   3 [32m+[m
+ windows/flutter/generated_plugins.cmake            |   2 [32m+[m
+ 23 files changed, 1506 insertions(+), 379 deletions(-)

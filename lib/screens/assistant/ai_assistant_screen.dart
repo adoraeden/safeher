@@ -5,6 +5,7 @@ import '../../services/ai_assistant_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/voice_input_button.dart';
 
 class AiAssistantScreen extends StatefulWidget {
   const AiAssistantScreen({super.key});
@@ -172,7 +173,11 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
             color: AppColors.warning.withValues(alpha: 0.12),
             child: const Row(
               children: [
-                Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.warning),
+                Icon(
+                  Icons.warning_amber_rounded,
+                  size: 16,
+                  color: AppColors.warning,
+                ),
                 SizedBox(width: AppSpacing.xs),
                 Expanded(
                   child: Text(
@@ -233,10 +238,7 @@ class _EmptyPromptsView extends StatelessWidget {
   final List<_PromptSuggestion> suggestions;
   final void Function(String) onSelect;
 
-  const _EmptyPromptsView({
-    required this.suggestions,
-    required this.onSelect,
-  });
+  const _EmptyPromptsView({required this.suggestions, required this.onSelect});
 
   @override
   Widget build(BuildContext context) {
@@ -320,10 +322,7 @@ class _EmptyPromptsView extends StatelessWidget {
           const SizedBox(height: AppSpacing.xs),
           const Text(
             'Tap any scenario below to get immediate guidance:',
-            style: TextStyle(
-              fontSize: 12,
-              color: AppColors.textSecondary,
-            ),
+            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
           ),
           const SizedBox(height: AppSpacing.md),
           ...suggestions.map(
@@ -415,13 +414,15 @@ class _MessageBubble extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Column(
-        crossAxisAlignment:
-            isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        crossAxisAlignment: isUser
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment:
-                isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+            mainAxisAlignment: isUser
+                ? MainAxisAlignment.end
+                : MainAxisAlignment.start,
             children: [
               if (!isUser) ...[
                 const Icon(
@@ -607,6 +608,15 @@ class _ChatInput extends StatelessWidget {
                   onSubmitted: isSending ? null : onSend,
                 ),
               ),
+              // Voice dictation: tap to speak, text appears in the box,
+              // then edit if needed and press send.
+              Opacity(
+                opacity: isSending ? 0.4 : 1.0,
+                child: IgnorePointer(
+                  ignoring: isSending,
+                  child: VoiceInputButton(controller: controller),
+                ),
+              ),
               const SizedBox(width: AppSpacing.xs),
               IconButton.filled(
                 onPressed: isSending ? null : () => onSend(controller.text),
@@ -633,4 +643,3 @@ class _ChatInput extends StatelessWidget {
     );
   }
 }
-

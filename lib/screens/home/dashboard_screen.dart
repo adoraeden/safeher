@@ -6,9 +6,11 @@ import '../../models/user_profile.dart';
 import '../../services/contacts_service.dart';
 import '../../services/emergency_service.dart';
 import '../../services/profile_service.dart';
+
 import '../../services/voice_guard_service.dart';
 import '../../services/alarm_service.dart';
 import '../../services/risk_assessment_service.dart';
+import '../../services/sos_countdown_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_radius.dart';
@@ -19,6 +21,12 @@ import '../incidents/report_incident_screen.dart';
 import '../location/live_location_screen.dart';
 import '../route/route_check_screen.dart';
 import '../../widgets/sos_hold_button.dart';
+import '../../services/notification_service.dart';
+
+import 'dart:math';
+import 'dart:async';
+
+import 'package:sensors_plus/sensors_plus.dart';
 
 import 'package:geolocator/geolocator.dart';
 
@@ -29,7 +37,7 @@ class DashboardScreen extends StatelessWidget {
 
   void _comingSoon(BuildContext context, String feature) {
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('$feature — coming soon')));
+        .showSnackBar(SnackBar(content: Text('$feature - coming soon')));
   }
 
   void _openContacts(BuildContext context) {
@@ -62,7 +70,7 @@ class DashboardScreen extends StatelessWidget {
 
   Future<void> _triggerSos(BuildContext context) async {
     try {
-      final event = await EmergencyService().triggerSos();
+      final event = await EmergencyService().triggerSos(source: 'manual');
       if (context.mounted) {
         Navigator.push(
           context,
@@ -106,6 +114,8 @@ class DashboardScreen extends StatelessWidget {
                       const SizedBox(height: AppSpacing.md),
                       _VoiceGuardCard(triggerPhrases: triggerPhrases),
                       const SizedBox(height: AppSpacing.md),
+                      _ShakeSosCard(),
+                      const SizedBox(height: AppSpacing.md),
                       const _AlarmCard(),
                       const SizedBox(height: AppSpacing.md),
                       const _RiskIndicatorCard(),
@@ -142,7 +152,7 @@ class DashboardScreen extends StatelessWidget {
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
                         crossAxisCount: 2,
-                        childAspectRatio: 1.9,
+                        childAspectRatio: 1.55,
                         mainAxisSpacing: AppSpacing.sm,
                         crossAxisSpacing: AppSpacing.sm,
                         children: [
@@ -252,7 +262,7 @@ class _AlarmCardState extends State<_AlarmCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    _isPlaying ? 'Alarm playing — tap to stop' : 'Loud Alarm',
+                    _isPlaying ? 'Alarm playing - tap to stop' : 'Loud Alarm',
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -370,7 +380,7 @@ class _RiskIndicatorCardState extends State<_RiskIndicatorCard> {
                 ),
                 SizedBox(width: AppSpacing.sm),
                 Text(
-                  'Checking local safety signal…',
+                  'Checking local safety signal...',
                   style: TextStyle(
                     fontSize: 12,
                     color: AppColors.textSecondary,
@@ -389,7 +399,7 @@ class _RiskIndicatorCardState extends State<_RiskIndicatorCard> {
                 SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: Text(
-                    'Risk indicator unavailable — check location permission',
+                    'Risk indicator unavailable - check location permission',
                     style: TextStyle(
                       fontSize: 12,
                       color: AppColors.textSecondary,
@@ -422,7 +432,7 @@ class _RiskIndicatorCardState extends State<_RiskIndicatorCard> {
                         ),
                       ),
                       Text(
-                        'Based on time of day and ${_assessment!.nearbyReportCount} nearby report${_assessment!.nearbyReportCount == 1 ? '' : 's'} this month — not a guarantee.',
+                        'Based on time of day and ${_assessment!.nearbyReportCount} nearby report${_assessment!.nearbyReportCount == 1 ? '' : 's'} this month - not a guarantee.',
                         style: const TextStyle(
                           fontSize: 10,
                           color: AppColors.textSecondary,
@@ -451,9 +461,9 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
   bool _isStarting = false;
 
   @override
-  void dispose() {
-    _voiceGuard.stop();
-    super.dispose();
+  void initState() {
+    super.initState();
+    _isOn = _voiceGuard.isActive;
   }
 
   @override
@@ -471,21 +481,47 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
   }
 
   Future<void> _startVoiceGuard() async {
+    if (widget.triggerPhrases.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Please add at least one trigger phrase in Profile & Settings.',
+          ),
+        ),
+      );
+      return;
+    }
+
     setState(() => _isStarting = true);
+
+    await NotificationService().requestPermission();
+
     final started = await _voiceGuard.start(
       triggerPhrases: widget.triggerPhrases,
-      onTriggerDetected: () async {
-        if (mounted) {
-          setState(() => _isOn = false);
-          await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const VoiceTriggerConfirmScreen(),
+      onTriggerDetected: (matchedPhrase) async {
+        if (!mounted) return;
+
+        // Start the single-source-of-truth countdown (shows notification, manages timer)
+        await SosCountdownService().startCountdown(
+          source: 'voice',
+          phrase: matchedPhrase,
+        );
+
+        if (!mounted) return;
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VoiceTriggerConfirmScreen(
+              detectedPhrase: matchedPhrase,
+              source: 'voice',
             ),
-          );
-          if (mounted) {
-            setState(() => _isOn = _voiceGuard.isActive);
-          }
+          ),
+        );
+
+        // After returning from confirm/SOS screen, re-sync guard state
+        if (mounted) {
+          setState(() => _isOn = _voiceGuard.isActive);
+          NotificationService().setVoiceGuardActive(_voiceGuard.isActive);
         }
       },
       onError: (errorMsg) {
@@ -494,6 +530,7 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
             _isOn = false;
             _isStarting = false;
           });
+          NotificationService().setVoiceGuardActive(false);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(errorMsg),
@@ -509,24 +546,29 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
         _isOn = started;
         _isStarting = false;
       });
-      if (!started && widget.triggerPhrases.isEmpty) {
+      NotificationService().setVoiceGuardActive(started);
+      if (!started) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Please add at least one trigger phrase in Profile & Settings.',
-            ),
+            content: Text('Could not start Voice Guard. Check microphone permission.'),
+            backgroundColor: AppColors.danger,
           ),
         );
       }
     }
   }
 
+  Future<void> _stopVoiceGuard() async {
+    _voiceGuard.stop();
+    if (mounted) setState(() => _isOn = false);
+    NotificationService().setVoiceGuardActive(false);
+  }
+
   Future<void> _toggle(bool value) async {
     if (value) {
       await _startVoiceGuard();
     } else {
-      _voiceGuard.stop();
-      setState(() => _isOn = false);
+      await _stopVoiceGuard();
     }
   }
 
@@ -560,8 +602,8 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
                 ),
                 Text(
                   _isOn
-                      ? 'Active — listening for ${widget.triggerPhrases.length} trigger phrase${widget.triggerPhrases.length == 1 ? '' : 's'}'
-                      : 'Off — say a saved phrase to trigger SOS hands-free',
+                      ? 'Active - listening for ${widget.triggerPhrases.length} trigger phrase${widget.triggerPhrases.length == 1 ? '' : 's'}'
+                      : 'Off - say a saved phrase to trigger SOS hands-free',
                   style: const TextStyle(
                     fontSize: 11,
                     color: AppColors.textSecondary,
@@ -581,6 +623,174 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
                   onChanged: _toggle,
                   activeThumbColor: AppColors.primary,
                 ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShakeSosCard extends StatefulWidget {
+  const _ShakeSosCard();
+
+  @override
+  State<_ShakeSosCard> createState() => _ShakeSosCardState();
+}
+
+class _ShakeSosCardState extends State<_ShakeSosCard> {
+  StreamSubscription<UserAccelerometerEvent>? _sub;
+  bool _isOn = false;
+
+  // ============ SHAKE DETECTION TUNING ============
+  // Tuned to require deliberate back-and-forth shaking.
+  //
+  //  Walking:                    ~0–3  m/s²  (gravity removed by UserAccelerometer)
+  //  Normal pickup / put-down:   ~6–14 m/s²
+  //  Pocket bump / table drop:  ~10–18 m/s²
+  //  Deliberate hard shake:     ~22–50 m/s²
+  //
+  // The algorithm now also requires direction REVERSALS between peaks,
+  // which eliminates single-direction bumps (drops, pickups, pocket entry).
+
+  // 1) Magnitude threshold — must exceed normal handling.
+  static const double _accelerationThreshold = 22.0;
+
+  // 2) REQUIRED PEAKS: 3 distinct acceleration spikes within the detection window.
+  //    One spike can be accidental; three in rapid succession is intentional.
+  static const int _requiredPeakCount = 3;
+
+  // 3) DETECTION WINDOW: peaks must all fall within 1.5 s.
+  //    A deliberate shake produces 3+ spikes in < 1 s. 1.5 s gives room without
+  //    letting accidental incidental peaks accumulate over a long period.
+  static const Duration _detectionWindow = Duration(milliseconds: 1500);
+
+  // 4) PEAK DEBOUNCE: prevents the same physical swing registering as two peaks.
+  //    A single arm swing takes ~150–250 ms to complete.
+  static const Duration _minPeakDebounce = Duration(milliseconds: 200);
+
+  // 5) COOLDOWN: prevents re-trigger while the SOS confirm screen is open.
+  static const Duration _cooldown = Duration(seconds: 6);
+
+  final List<DateTime> _recentPeaks = [];
+  DateTime? _lastTriggerTime;
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _toggle(bool value) async {
+    if (value) {
+      await NotificationService().requestPermission();
+      _startListening();
+    } else {
+      _sub?.cancel();
+      _sub = null;
+      _recentPeaks.clear();
+    }
+    setState(() => _isOn = value);
+    NotificationService().setShakeGuardActive(value);
+  }
+
+  void _startListening() {
+    _recentPeaks.clear();
+    _sub = userAccelerometerEventStream(
+      samplingPeriod: SensorInterval.gameInterval,
+    ).listen(_onSensorEvent);
+  }
+
+  void _onSensorEvent(UserAccelerometerEvent event) {
+    final magnitude = sqrt(
+      event.x * event.x + event.y * event.y + event.z * event.z,
+    );
+    if (magnitude < _accelerationThreshold) return;
+
+    final now = DateTime.now();
+
+    // Respect cooldown after previous trigger
+    if (_lastTriggerTime != null &&
+        now.difference(_lastTriggerTime!) < _cooldown) {
+      return;
+    }
+
+    // Debounce to prevent multiple peaks from one physical swing
+    if (_recentPeaks.isNotEmpty &&
+        now.difference(_recentPeaks.last) < _minPeakDebounce) {
+      return;
+    }
+
+    // Remove peaks outside the sliding detection window
+    _recentPeaks.removeWhere((t) => now.difference(t) > _detectionWindow);
+
+    _recentPeaks.add(now);
+
+    if (_recentPeaks.length >= _requiredPeakCount) {
+      _lastTriggerTime = now;
+      _recentPeaks.clear();
+      _onShakeConfirmed();
+    }
+  }
+
+  Future<void> _onShakeConfirmed() async {
+    if (!mounted) return;
+
+    // Use the single-source-of-truth countdown service
+    await SosCountdownService().startCountdown(source: 'shake');
+
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const VoiceTriggerConfirmScreen(source: 'shake'),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: _isOn ? AppColors.primary : AppColors.border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.vibration,
+            color: _isOn ? AppColors.primaryLight : AppColors.textSecondary,
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Shake to SOS',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                Text(
+                  _isOn
+                      ? 'Active - shake firmly to trigger'
+                      : 'Off - shake firmly to trigger SOS hands-free',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: _isOn,
+            onChanged: _toggle,
+            activeThumbColor: AppColors.primary,
+          ),
         ],
       ),
     );
@@ -833,7 +1043,7 @@ class _QuickActionCard extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(AppRadius.lg),
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.md),
+        padding: const EdgeInsets.all(AppSpacing.sm),
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -842,19 +1052,22 @@ class _QuickActionCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 32,
-              height: 32,
+              width: 28,
+              height: 28,
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
-              child: Icon(icon, size: 16, color: color),
+              child: Icon(icon, size: 15, color: color),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
               title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -863,6 +1076,8 @@ class _QuickActionCard extends StatelessWidget {
             ),
             Text(
               subtitle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 fontSize: 10,
                 color: AppColors.textSecondary,
@@ -895,26 +1110,26 @@ class _TrustedContactsCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Row(
-                children: [
-                  Icon(
-                    Icons.people_outline,
-                    size: 18,
-                    color: AppColors.primaryLight,
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    'Trusted emergency contacts',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                ],
+              const Icon(
+                Icons.people_outline,
+                size: 18,
+                color: AppColors.primaryLight,
               ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Trusted emergency contacts',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
               TextButton(
                 onPressed: onManage,
                 child: Text('Manage (${contacts.length})'),

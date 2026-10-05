@@ -36,7 +36,10 @@ class EmergencyService {
     return Geolocator.getCurrentPosition();
   }
 
-  Future<EmergencyEvent> triggerSos() async {
+  Future<EmergencyEvent> triggerSos({
+    String source = 'manual',
+    String? phrase,
+  }) async {
     final uid = await requireUid();
     final position = await _getCurrentLocation();
     final contacts = await _contactsService.getContactsOnce();
@@ -51,6 +54,8 @@ class EmergencyService {
       'lng': position.longitude,
       'timestamp': DateTime.now().toIso8601String(),
       'status': 'ACTIVE',
+      'source': source,
+      'triggerPhrase': ?phrase,
       'notifiedContacts': notifiedContacts,
     };
 
