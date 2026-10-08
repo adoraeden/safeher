@@ -1,5 +1,9 @@
 package com.safeher.women_safety
 
+
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -455,10 +459,15 @@ class VoiceGuardListenService : Service() {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
         return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIF_LISTENING, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                )
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                var type = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                // Only add location if the user already allowed it. Android 14+
+                // crashes the service start otherwise, and Voice Guard must still start.
+                val hasLocation = ContextCompat.checkSelfPermission(
+                    this, Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+                if (hasLocation) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                startForeground(NOTIF_LISTENING, notification, type)
             } else {
                 startForeground(NOTIF_LISTENING, notification)
             }

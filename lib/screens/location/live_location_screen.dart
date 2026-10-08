@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../models/emergency_contact.dart';
 import '../../services/contacts_service.dart';
 import '../../services/location_share_service.dart';
+import '../../services/sms_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
@@ -16,19 +17,17 @@ class LiveLocationScreen extends StatefulWidget {
   final LocationShareService? service;
   final Stream<List<EmergencyContact>>? contactsStream;
 
-  const LiveLocationScreen({
-    super.key,
-    this.service,
-    this.contactsStream,
-  });
+  const LiveLocationScreen({super.key, this.service, this.contactsStream});
 
   @override
   State<LiveLocationScreen> createState() => _LiveLocationScreenState();
 }
 
 class _LiveLocationScreenState extends State<LiveLocationScreen> {
-  late final LocationShareService _service = widget.service ?? LocationShareService();
+  late final LocationShareService _service =
+      widget.service ?? LocationShareService();
   late final ContactsService _contactsService = ContactsService();
+  final _sms = SmsService();
 
   // Instant share state
   Position? _currentPosition;
@@ -47,6 +46,14 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
     Duration(minutes: 30),
     Duration(hours: 1),
   ];
+  @override
+  void initState() {
+    super.initState();
+    // Ask for SMS permission now, so it is already allowed when SOS needs it.
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _sms.ensurePermission(),
+    );
+  }
 
   @override
   void dispose() {
@@ -92,10 +99,7 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
           _isFetchingLocation = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMsg),
-            backgroundColor: AppColors.danger,
-          ),
+          SnackBar(content: Text(errorMsg), backgroundColor: AppColors.danger),
         );
       }
     }
@@ -120,17 +124,16 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
 
     try {
       // ignore: deprecated_member_use
-      await Share.share(
-        text,
-        subject: 'My Current Location - SafeHer',
-      );
+      await Share.share(text, subject: 'My Current Location - SafeHer');
     } catch (_) {
       // Graceful fallback to clipboard if native share sheet is unavailable on current platform
       await Clipboard.setData(ClipboardData(text: mapUrl));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Native share unavailable. Map link copied to clipboard!'),
+            content: Text(
+              'Native share unavailable. Map link copied to clipboard!',
+            ),
           ),
         );
       }
@@ -147,14 +150,15 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
       );
       if (!launched && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open external map application.')),
+          const SnackBar(
+            content: Text('Could not open external map application.'),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error launching map: $e')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error launching map: $e')));
       }
     }
   }
@@ -169,37 +173,57 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
     }
   }
 
-  /// Opens native SMS app with recipient and prefilled message.
-  Future<void> _shareViaSms(EmergencyContact contact, String url) async {
-    final name = _currentUserName;
-    final text = LocationShareService.buildShareMessage(
-      latitude: _currentPosition?.latitude ?? 0.0,
-      longitude: _currentPosition?.longitude ?? 0.0,
-      name: name,
-    );
-    final cleanPhone = contact.phone.trim();
-    final smsUri = Uri(
-      scheme: 'sms',
-      path: cleanPhone,
-      queryParameters: {'body': text},
-    );
+  void _snack(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
 
-    try {
-      if (await canLaunchUrl(smsUri)) {
-        await launchUrl(smsUri);
-      } else {
-        final fallbackUri = Uri.parse(
-          'sms:$cleanPhone?body=${Uri.encodeComponent(text)}',
-        );
-        await launchUrl(fallbackUri);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not launch SMS app: $e')),
-        );
-      }
+  String _smsText() => LocationShareService.buildShareMessage(
+    latitude: _currentPosition?.latitude ?? 0.0,
+    longitude: _currentPosition?.longitude ?? 0.0,
+    name: _currentUserName,
+  );
+
+  /// Sends the location straight to the given contacts by SMS.
+  Future<void> _sendSmsTo(List<EmergencyContact> contacts) async {
+    if (contacts.isEmpty) {
+      _snack('No emergency contacts to send to.');
+      return;
     }
+    if (_currentPosition == null) return;
+
+    final allowed = await _sms.ensurePermission();
+    if (!allowed) {
+      _snack(
+        'SMS permission is needed to send your location. Allow it in the phone settings, or use WhatsApp.',
+      );
+      return;
+    }
+
+    final text = _smsText();
+    int sent = 0;
+    for (final c in contacts) {
+      if (await _sms.send(c.phone, text)) sent++;
+    }
+    _snack(
+      sent == contacts.length
+          ? 'Location sent by SMS to $sent contact${sent == 1 ? '' : 's'}.'
+          : 'Sent to $sent of ${contacts.length} contacts. Check the other phone numbers.',
+    );
+  }
+
+  /// SMS button next to one contact.
+  Future<void> _shareViaSms(EmergencyContact contact, String url) =>
+      _sendSmsTo([contact]);
+
+  /// One tap: get the GPS location and SMS it to every contact.
+  Future<void> _sendToAllContacts() async {
+    await _fetchCurrentLocation();
+    if (_currentPosition == null) return; // the error is already shown
+    final contacts =
+        await (widget.contactsStream?.first ??
+            _contactsService.getContactsOnce());
+    await _sendSmsTo(contacts);
   }
 
   /// Opens WhatsApp with recipient phone and prefilled message.
@@ -229,9 +253,9 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open WhatsApp: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not open WhatsApp: $e')));
       }
     }
   }
@@ -369,11 +393,17 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
               decoration: BoxDecoration(
                 color: AppColors.danger.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(AppRadius.md),
-                border: Border.all(color: AppColors.danger.withValues(alpha: 0.3)),
+                border: Border.all(
+                  color: AppColors.danger.withValues(alpha: 0.3),
+                ),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.error_outline, color: AppColors.danger, size: 18),
+                  const Icon(
+                    Icons.error_outline,
+                    color: AppColors.danger,
+                    size: 18,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -431,7 +461,10 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                   const SizedBox(height: 6),
                   const Text(
                     'Universal link — opens directly in Google Maps, Apple Maps, or any browser.',
-                    style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ],
               ),
@@ -443,10 +476,8 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.share, size: 16),
                     label: const Text('Share'),
-                    onPressed: () => _triggerNativeShare(
-                      _currentMapUrl!,
-                      _currentPosition,
-                    ),
+                    onPressed: () =>
+                        _triggerNativeShare(_currentMapUrl!, _currentPosition),
                   ),
                 ),
                 const SizedBox(width: AppSpacing.sm),
@@ -462,6 +493,15 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                   onPressed: () => _openMapUrl(_currentMapUrl!),
                 ),
               ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.sms_outlined, size: 16),
+                label: const Text('Send to All Contacts by SMS'),
+                onPressed: _sendToAllContacts,
+              ),
             ),
           ] else ...[
             const SizedBox(height: AppSpacing.lg),
@@ -481,11 +521,9 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                 label: Text(
                   _isFetchingLocation
                       ? 'Acquiring GPS location…'
-                      : 'Get & Share Current Location',
+                      : 'Send to All Contacts by SMS',
                 ),
-                onPressed: _isFetchingLocation
-                    ? null
-                    : () => _fetchCurrentLocation(autoShare: true),
+                onPressed: _isFetchingLocation ? null : _sendToAllContacts,
               ),
             ),
           ],
@@ -509,7 +547,7 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
         ),
         const SizedBox(height: 4),
         const Text(
-          'Tap SMS or WhatsApp to open your messaging app with your location link prefilled. No messages are sent automatically in the background.',
+          'SMS sends your location straight to the contact. WhatsApp opens the chat with your location filled in - you just tap Send there.',
           style: TextStyle(
             fontSize: 12,
             color: AppColors.textSecondary,
@@ -532,7 +570,10 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                 ),
                 child: const Text(
                   'No emergency contacts configured yet. Add trusted contacts in the Emergency Contacts tab to share with them quickly.',
-                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSecondary,
+                  ),
                 ),
               );
             }
@@ -541,7 +582,8 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
               itemCount: contacts.length,
-              separatorBuilder: (context, index) => const SizedBox(height: AppSpacing.xs),
+              separatorBuilder: (context, index) =>
+                  const SizedBox(height: AppSpacing.xs),
               itemBuilder: (context, index) {
                 final contact = contacts[index];
                 return Container(
@@ -558,7 +600,9 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                     children: [
                       CircleAvatar(
                         radius: 16,
-                        backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+                        backgroundColor: AppColors.primary.withValues(
+                          alpha: 0.15,
+                        ),
                         child: Text(
                           contact.name.isNotEmpty
                               ? contact.name[0].toUpperCase()
@@ -599,7 +643,10 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                           minimumSize: const Size(0, 32),
                         ),
                         icon: const Icon(Icons.sms_outlined, size: 14),
-                        label: const Text('SMS', style: TextStyle(fontSize: 11)),
+                        label: const Text(
+                          'SMS',
+                          style: TextStyle(fontSize: 11),
+                        ),
                         onPressed: () async {
                           if (_currentMapUrl == null) {
                             await _fetchCurrentLocation();
@@ -615,7 +662,10 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                           minimumSize: const Size(0, 32),
                         ),
                         icon: const Icon(Icons.chat_bubble_outline, size: 14),
-                        label: const Text('WhatsApp', style: TextStyle(fontSize: 11)),
+                        label: const Text(
+                          'WhatsApp',
+                          style: TextStyle(fontSize: 11),
+                        ),
                         onPressed: () async {
                           if (_currentMapUrl == null) {
                             await _fetchCurrentLocation();
@@ -765,7 +815,10 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
               ),
               child: SelectableText(
                 _currentMapUrl!,
-                style: const TextStyle(fontSize: 11, color: AppColors.primaryLight),
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.primaryLight,
+                ),
               ),
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -775,10 +828,8 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.share, size: 16),
                     label: const Text('Share Link'),
-                    onPressed: () => _triggerNativeShare(
-                      _currentMapUrl!,
-                      _currentPosition,
-                    ),
+                    onPressed: () =>
+                        _triggerNativeShare(_currentMapUrl!, _currentPosition),
                   ),
                 ),
                 const SizedBox(width: AppSpacing.sm),

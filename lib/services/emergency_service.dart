@@ -1,14 +1,21 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 
 import '../models/emergency_event.dart';
 import 'auth_helpers.dart';
 import 'contacts_service.dart';
+import 'location_share_service.dart';
+import 'sms_service.dart';
 
 class EmergencyService {
+  /// Set to false to go back to demo mode (no real SMS is sent on SOS).
+  static const bool sendRealSms = true;
+
   final _firestore = FirebaseFirestore.instance;
   final _contactsService = ContactsService();
+  final _sms = SmsService();
 
   Future<Position> _getCurrentLocation() async {
     final serviceEnabled = await Geolocator.isLocationServiceEnabled();
@@ -33,7 +40,25 @@ class EmergencyService {
       );
     }
 
-    return Geolocator.getCurrentPosition();
+    // Use the phone's own recent position if it is under a minute old.
+    // This is instant. Otherwise ask for a fresh GPS fix, with a time limit.
+    final last = await Geolocator.getLastKnownPosition();
+    if (last != null &&
+        DateTime.now().difference(last.timestamp).inSeconds < 60) {
+      return last;
+    }
+    try {
+      return await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+    } catch (_) {
+      // A slightly old position is better than no position in an emergency.
+      if (last != null) return last;
+      rethrow;
+    }
   }
 
   Future<EmergencyEvent> triggerSos({
@@ -41,13 +66,51 @@ class EmergencyService {
     String? phrase,
   }) async {
     final uid = await requireUid();
+    final clock = Stopwatch()..start();
+    debugPrint('[SOS] getting location...');
     final position = await _getCurrentLocation();
+    debugPrint('[SOS] got location after ${clock.elapsedMilliseconds} ms');
     final contacts = await _contactsService.getContactsOnce();
     final notifyList = contacts.where((c) => c.notifyOnSos).toList();
 
-    final notifiedContacts = notifyList
-        .map((c) => {'name': c.name, 'phone': c.phone, 'demo': true})
-        .toList();
+    final name = FirebaseAuth.instance.currentUser?.displayName;
+    final who = (name == null || name.trim().isEmpty)
+        ? 'A SafeHer user'
+        : name.trim();
+    final mapUrl = LocationShareService.formatMapUrl(
+      position.latitude,
+      position.longitude,
+    );
+    final message =
+        '$who needs help! SOS triggered from SafeHer. '
+        'Location: $mapUrl';
+
+    // SMS must never stop the SOS, so every failure is caught here.
+    bool canSms = false;
+    if (sendRealSms) {
+      try {
+        canSms = await _sms.hasPermission();
+      } catch (_) {}
+    }
+
+    final notifiedContacts = <Map<String, dynamic>>[];
+    for (final c in notifyList) {
+      bool sent = false;
+      if (sendRealSms && canSms) {
+        try {
+          sent = await _sms.send(c.phone, message);
+        } catch (e) {
+          debugPrint('[SOS] SMS to ${c.name} failed: $e');
+        }
+      }
+      notifiedContacts.add({
+        'name': c.name,
+        'phone': c.phone,
+        'demo': !sendRealSms,
+        'smsSent': sent,
+      });
+    }
+    debugPrint('[SOS] SMS step done after ${clock.elapsedMilliseconds} ms');
 
     final data = {
       'lat': position.latitude,
