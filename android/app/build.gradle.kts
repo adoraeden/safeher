@@ -43,6 +43,8 @@ android {
 }
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // Offline speech recognition used by Voice Guard
+    implementation("com.alphacephei:vosk-android:0.3.75")
 }
 
 kotlin {

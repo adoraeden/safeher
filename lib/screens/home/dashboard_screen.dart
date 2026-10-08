@@ -464,6 +464,15 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
   void initState() {
     super.initState();
     _isOn = _voiceGuard.isActive;
+
+    // If Voice Guard was already running when this card was rebuilt, hand it
+    // this card's callbacks again so a trigger never goes to a dead screen.
+    // (start() does nothing heavy when the phrases are unchanged.)
+    if (_isOn) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _startVoiceGuard(showInfo: false);
+      });
+    }
   }
 
   @override
@@ -477,10 +486,10 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
 
   Future<void> _restartWithUpdatedPhrases() async {
     _voiceGuard.stop();
-    await _startVoiceGuard();
+    await _startVoiceGuard(showInfo: false);
   }
 
-  Future<void> _startVoiceGuard() async {
+  Future<void> _startVoiceGuard({bool showInfo = true}) async {
     if (widget.triggerPhrases.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -518,7 +527,10 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
           ),
         );
 
-        // After returning from confirm/SOS screen, re-sync guard state
+        // After returning from confirm/SOS screen, start listening again.
+        // (The guard pauses itself when it hears the phrase. resume() does
+        // nothing if it is not paused, so this is always safe.)
+        _voiceGuard.resume();
         if (mounted) {
           setState(() => _isOn = _voiceGuard.isActive);
           NotificationService().setVoiceGuardActive(_voiceGuard.isActive);
@@ -550,8 +562,19 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
       if (!started) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Could not start Voice Guard. Check microphone permission.'),
+            content: Text(
+              'Could not start Voice Guard. Check microphone permission.',
+            ),
             backgroundColor: AppColors.danger,
+          ),
+        );
+      } else if (showInfo) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Voice Guard keeps listening in the background. Do not swipe SafeHer away from recent apps - that turns it off.',
+            ),
+            duration: Duration(seconds: 6),
           ),
         );
       }
@@ -574,6 +597,11 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
 
   @override
   Widget build(BuildContext context) {
+    final phraseCount = widget.triggerPhrases.length;
+    final String subtitle = _isOn
+        ? 'Active - listening for $phraseCount trigger phrase${phraseCount == 1 ? '' : 's'}, also in the background'
+        : 'Off - say a saved phrase to trigger SOS hands-free';
+
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
@@ -601,14 +629,23 @@ class _VoiceGuardCardState extends State<_VoiceGuardCard> {
                   ),
                 ),
                 Text(
-                  _isOn
-                      ? 'Active - listening for ${widget.triggerPhrases.length} trigger phrase${widget.triggerPhrases.length == 1 ? '' : 's'}'
-                      : 'Off - say a saved phrase to trigger SOS hands-free',
+                  subtitle,
                   style: const TextStyle(
                     fontSize: 11,
                     color: AppColors.textSecondary,
                   ),
                 ),
+                if (_isOn)
+                  ValueListenableBuilder<String>(
+                    valueListenable: _voiceGuard.debugInfo,
+                    builder: (context, info, _) => Text(
+                      info,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: AppColors.primaryLight,
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),

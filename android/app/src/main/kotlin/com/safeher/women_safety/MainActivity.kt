@@ -1,49 +1,69 @@
 package com.safeher.women_safety
 
 import android.content.Intent
-import android.os.Build
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private val CHANNEL = "com.safeher.women_safety/voice_guard_service"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "startService" -> {
-                    try {
-                        val intent = Intent(this, VoiceGuardForegroundService::class.java).apply {
-                            action = VoiceGuardForegroundService.ACTION_START
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        MethodChannel(messenger, "com.safeher.women_safety/voice_guard")
+            .setMethodCallHandler { call, result ->
+                try {
+                    when (call.method) {
+                        "start" -> {
+                            val phrases = call.argument<List<String>>("phrases") ?: emptyList()
+                            val intent = Intent(this, VoiceGuardListenService::class.java).apply {
+                                action = VoiceGuardListenService.ACTION_START
+                                putStringArrayListExtra(
+                                    VoiceGuardListenService.EXTRA_PHRASES, ArrayList(phrases)
+                                )
+                            }
                             ContextCompat.startForegroundService(this, intent)
-                        } else {
-                            startService(intent)
+                            result.success(true)
                         }
-                        result.success(true)
-                    } catch (e: Exception) {
-                        result.error("SERVICE_START_FAILED", e.message, null)
-                    }
-                }
-                "stopService" -> {
-                    try {
-                        val intent = Intent(this, VoiceGuardForegroundService::class.java).apply {
-                            action = VoiceGuardForegroundService.ACTION_STOP
+                        "stop" -> {
+                            sendAction(VoiceGuardListenService.ACTION_STOP)
+                            result.success(true)
                         }
-                        startService(intent)
-                        stopService(intent)
-                        result.success(true)
-                    } catch (e: Exception) {
-                        result.error("SERVICE_STOP_FAILED", e.message, null)
+                        "pause" -> {
+                            sendAction(VoiceGuardListenService.ACTION_PAUSE)
+                            result.success(true)
+                        }
+                        "resume" -> {
+                            sendAction(VoiceGuardListenService.ACTION_RESUME)
+                            result.success(true)
+                        }
+                        "isRunning" -> result.success(VoiceGuardListenService.isRunning)
+                        else -> result.notImplemented()
                     }
+                } catch (e: Exception) {
+                    result.error("VOICE_GUARD_ERROR", e.message, null)
                 }
-                else -> result.notImplemented()
             }
+
+        EventChannel(messenger, "com.safeher.women_safety/voice_guard_events")
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    VoiceGuardBridge.sink = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    VoiceGuardBridge.sink = null
+                }
+            })
+    }
+
+    private fun sendAction(action: String) {
+        val intent = Intent(this, VoiceGuardListenService::class.java).apply {
+            this.action = action
         }
+        startService(intent)
     }
 }
