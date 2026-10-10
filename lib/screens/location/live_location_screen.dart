@@ -28,6 +28,7 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
       widget.service ?? LocationShareService();
   late final ContactsService _contactsService = ContactsService();
   final _sms = SmsService();
+  List<EmergencyContact> _latestContacts = [];
 
   // Instant share state
   Position? _currentPosition;
@@ -220,9 +221,11 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
   Future<void> _sendToAllContacts() async {
     await _fetchCurrentLocation();
     if (_currentPosition == null) return; // the error is already shown
-    final contacts =
-        await (widget.contactsStream?.first ??
-            _contactsService.getContactsOnce());
+    final List<EmergencyContact> contacts = _latestContacts.isNotEmpty
+        ? _latestContacts
+        : (widget.contactsStream != null
+              ? <EmergencyContact>[]
+              : await _contactsService.getContactsOnce());
     await _sendSmsTo(contacts);
   }
 
@@ -559,6 +562,7 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
           stream: widget.contactsStream ?? _contactsService.watchContacts(),
           builder: (context, snapshot) {
             final contacts = snapshot.data ?? [];
+            _latestContacts = contacts;
             if (contacts.isEmpty) {
               return Container(
                 width: double.infinity,

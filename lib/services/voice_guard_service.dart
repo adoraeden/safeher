@@ -14,6 +14,7 @@ class VoiceTriggerMatcher {
           RegExp(r'''[.,\/#!$%\^\&\*;:{}=\-_`~()?"''""\[\]\\]'''),
           ' ',
         )
+        .replaceAll(RegExp('[\u2018\u2019\u201C\u201D]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
   }

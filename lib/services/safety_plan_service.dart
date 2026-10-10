@@ -13,6 +13,13 @@ class SafetyPlanService {
       .collection('safetyPlan')
       .doc('main');
 
+  DocumentReference<Map<String, dynamic>> _savedTipsDoc(String uid) =>
+      _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('safetyPlan')
+          .doc('savedTips');
+
   Stream<SafetyPlan> watchPlan() {
     return FirebaseAuth.instance.authStateChanges().asyncExpand((user) {
       if (user == null) return Stream.value(SafetyPlan.empty());
@@ -26,5 +33,22 @@ class SafetyPlanService {
   Future<void> savePlan(SafetyPlan plan) async {
     final uid = await requireUid();
     await _docFor(uid).set(plan.toMap());
+  }
+
+  /// The ids of the safety tips the user starred.
+  Stream<Set<String>> watchSavedTips() {
+    return FirebaseAuth.instance.authStateChanges().asyncExpand((user) {
+      if (user == null) return Stream.value(<String>{});
+      return _savedTipsDoc(user.uid).snapshots().map((doc) {
+        final ids = doc.data()?['ids'];
+        if (ids is List) return ids.map((e) => e.toString()).toSet();
+        return <String>{};
+      });
+    });
+  }
+
+  Future<void> setSavedTips(Set<String> ids) async {
+    final uid = await requireUid();
+    await _savedTipsDoc(uid).set({'ids': ids.toList()});
   }
 }
