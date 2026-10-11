@@ -11,6 +11,7 @@ import '../../services/incident_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/safeher_map.dart';
 
 class SafetyMapScreen extends StatefulWidget {
   const SafetyMapScreen({super.key});
@@ -29,11 +30,11 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
   String? _error;
 
   static const _filters = [
-    {'key': 'all', 'label': 'All'},
-    {'key': 'police', 'label': 'Police'},
-    {'key': 'hospital', 'label': 'Hospitals'},
-    {'key': 'shelter', 'label': 'Shelters'},
-    {'key': 'incident', 'label': 'Reported'},
+    ('all', 'All', Icons.apps),
+    ('police', 'Police', Icons.local_police_outlined),
+    ('hospital', 'Hospitals', Icons.local_hospital_outlined),
+    ('shelter', 'Shelters', Icons.home_outlined),
+    ('incident', 'Reported', Icons.warning_amber_outlined),
   ];
 
   @override
@@ -62,6 +63,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
 
       final position = await Geolocator.getCurrentPosition();
       final location = LatLng(position.latitude, position.longitude);
+      if (!mounted) return;
       setState(() {
         _currentLocation = location;
         _demoMarkers = DemoSafetyMarkers.around(
@@ -71,11 +73,20 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString().replaceFirst('Exception: ', '');
         _isLoading = false;
       });
     }
+  }
+
+  void _recenter() {
+    final loc = _currentLocation;
+    if (loc == null) return;
+    try {
+      _mapController.move(loc, 15);
+    } catch (_) {}
   }
 
   Color _colorForType(String type) {
@@ -253,31 +264,101 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                     ? incidents
                     : <IncidentReport>[];
 
-                return Column(
+                int countFor(String key) {
+                  switch (key) {
+                    case 'all':
+                      return _demoMarkers.length + incidents.length;
+                    case 'incident':
+                      return incidents.length;
+                    default:
+                      return _demoMarkers.where((m) => m.type == key).length;
+                  }
+                }
+
+                return Stack(
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.md,
-                        vertical: AppSpacing.sm,
+                    FlutterMap(
+                      mapController: _mapController,
+                      options: MapOptions(
+                        initialCenter: _currentLocation!,
+                        initialZoom: 15,
                       ),
+                      children: [
+                        const SafeHerTileLayer(),
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: _currentLocation!,
+                              width: 48,
+                              height: 48,
+                              child: const MyLocationDot(),
+                            ),
+                            ...visibleDemo.map(
+                              (marker) => Marker(
+                                point: LatLng(marker.lat, marker.lng),
+                                width: 40,
+                                height: 40,
+                                child: GestureDetector(
+                                  onTap: () => _showDemoMarkerDetail(marker),
+                                  child: MapPinBadge(
+                                    color: _colorForType(marker.type),
+                                    icon: _iconForType(marker.type),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            ...visibleIncidents.map(
+                              (report) => Marker(
+                                point: LatLng(report.lat!, report.lng!),
+                                width: 40,
+                                height: 40,
+                                child: GestureDetector(
+                                  onTap: () => _showIncidentDetail(report),
+                                  child: const MapPinBadge(
+                                    color: AppColors.dangerLight,
+                                    icon: Icons.warning_amber_outlined,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SafeHerAttribution(),
+                      ],
+                    ),
+                    Positioned(
+                      top: AppSpacing.sm,
+                      left: 0,
+                      right: 0,
                       child: SizedBox(
-                        height: 36,
+                        height: 40,
                         child: ListView.separated(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.md,
+                          ),
                           scrollDirection: Axis.horizontal,
                           itemCount: _filters.length,
                           separatorBuilder: (_, _) => const SizedBox(width: 8),
                           itemBuilder: (context, index) {
-                            final filter = _filters[index];
-                            final isActive = _activeFilter == filter['key'];
+                            final f = _filters[index];
+                            final isActive = _activeFilter == f.$1;
                             return ChoiceChip(
+                              showCheckmark: false,
+                              elevation: 3,
+                              avatar: Icon(
+                                f.$3,
+                                size: 16,
+                                color: isActive
+                                    ? Colors.white
+                                    : AppColors.textSecondary,
+                              ),
                               label: Text(
-                                filter['label']!,
+                                '${f.$2} (${countFor(f.$1)})',
                                 style: const TextStyle(fontSize: 12),
                               ),
                               selected: isActive,
-                              onSelected: (_) => setState(
-                                () => _activeFilter = filter['key']!,
-                              ),
+                              onSelected: (_) =>
+                                  setState(() => _activeFilter = f.$1),
                               selectedColor: AppColors.primary,
                               backgroundColor: AppColors.surface,
                               side: const BorderSide(color: AppColors.border),
@@ -291,128 +372,39 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                         ),
                       ),
                     ),
-                    Expanded(
-                      child: Stack(
-                        children: [
-                          FlutterMap(
-                            mapController: _mapController,
-                            options: MapOptions(
-                              initialCenter: _currentLocation!,
-                              initialZoom: 15,
-                            ),
-                            children: [
-                              TileLayer(
-                                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                userAgentPackageName:
-                                    'com.safeher.women_safety',
-                              ),
-                              MarkerLayer(
-                                markers: [
-                                  Marker(
-                                    point: _currentLocation!,
-                                    width: 40,
-                                    height: 40,
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: AppColors.primary,
-                                        shape: BoxShape.circle,
-                                        border: Border.all(
-                                          color: Colors.white,
-                                          width: 2,
-                                        ),
-                                      ),
-                                      child: const Icon(
-                                        Icons.navigation,
-                                        color: Colors.white,
-                                        size: 18,
-                                      ),
-                                    ),
-                                  ),
-                                  ...visibleDemo.map(
-                                    (marker) => Marker(
-                                      point: LatLng(marker.lat, marker.lng),
-                                      width: 40,
-                                      height: 40,
-                                      child: GestureDetector(
-                                        onTap: () =>
-                                            _showDemoMarkerDetail(marker),
-                                        child: Container(
-                                          decoration: BoxDecoration(
-                                            color: _colorForType(marker.type),
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color: Colors.white,
-                                              width: 2,
-                                            ),
-                                          ),
-                                          child: Icon(
-                                            _iconForType(marker.type),
-                                            color: Colors.white,
-                                            size: 18,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  ...visibleIncidents.map(
-                                    (report) => Marker(
-                                      point: LatLng(report.lat!, report.lng!),
-                                      width: 40,
-                                      height: 40,
-                                      child: GestureDetector(
-                                        onTap: () =>
-                                            _showIncidentDetail(report),
-                                        child: Container(
-                                          decoration: BoxDecoration(
-                                            color: AppColors.dangerLight,
-                                            shape: BoxShape.circle,
-                                            border: Border.all(
-                                              color: Colors.white,
-                                              width: 2,
-                                            ),
-                                          ),
-                                          child: const Icon(
-                                            Icons.warning_amber_outlined,
-                                            color: Colors.white,
-                                            size: 18,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                    Positioned(
+                      right: AppSpacing.md,
+                      bottom: 78,
+                      child: FloatingActionButton.small(
+                        heroTag: 'safety_map_recenter',
+                        backgroundColor: AppColors.surface,
+                        foregroundColor: AppColors.primaryLight,
+                        onPressed: _recenter,
+                        child: const Icon(Icons.my_location),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: 28,
+                      left: AppSpacing.md,
+                      right: AppSpacing.md,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.surface.withValues(alpha: 0.95),
+                          borderRadius: BorderRadius.circular(AppRadius.md),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: const Text(
+                          'Police/hospital/shelter pins are demo data. Red "Reported" pins are real community submissions.',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
                           ),
-                          Positioned(
-                            bottom: AppSpacing.md,
-                            left: AppSpacing.md,
-                            right: AppSpacing.md,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.surface.withValues(
-                                  alpha: 0.95,
-                                ),
-                                borderRadius: BorderRadius.circular(
-                                  AppRadius.md,
-                                ),
-                                border: Border.all(color: AppColors.border),
-                              ),
-                              child: const Text(
-                                'Police/hospital/shelter pins are demo data. Red "Reported" pins are real community submissions.',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: AppColors.textSecondary,
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          ),
-                        ],
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ),
                   ],

@@ -32,6 +32,12 @@ class RouteCheckResult {
 class RouteService {
   final _incidentService = IncidentService();
 
+  // The dedicated walking server first, then the general demo server.
+  static const _routeBases = [
+    'https://routing.openstreetmap.de/routed-foot/route/v1/foot',
+    'https://router.project-osrm.org/route/v1/foot',
+  ];
+
   Future<RoutePoint?> geocodeAddress(String query) async {
     final uri = Uri.parse(
       'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=1',
@@ -47,23 +53,41 @@ class RouteService {
     return RoutePoint(double.parse(first['lat']), double.parse(first['lon']));
   }
 
+  Future<Map<String, dynamic>?> _fetchRoute(
+    RoutePoint from,
+    RoutePoint to,
+  ) async {
+    for (final base in _routeBases) {
+      try {
+        final uri = Uri.parse(
+          '$base/${from.lng},${from.lat};${to.lng},${to.lat}?geometries=geojson&overview=full',
+        );
+        final response = await http
+            .get(uri)
+            .timeout(const Duration(seconds: 12));
+        if (response.statusCode != 200) continue;
+        final data = jsonDecode(response.body);
+        if (data['code'] == 'Ok' && (data['routes'] as List).isNotEmpty) {
+          return data['routes'][0] as Map<String, dynamic>;
+        }
+      } catch (_) {
+        // Try the next server.
+      }
+    }
+    return null;
+  }
+
   Future<RouteCheckResult> checkRoute({
     required RoutePoint from,
     required RoutePoint to,
   }) async {
-    final uri = Uri.parse(
-      'https://router.project-osrm.org/route/v1/foot/${from.lng},${from.lat};${to.lng},${to.lat}?geometries=geojson&overview=full',
-    );
-    final response = await http.get(uri);
-    if (response.statusCode != 200) {
-      throw Exception('Could not fetch a route right now.');
-    }
-    final data = jsonDecode(response.body);
-    if (data['code'] != 'Ok' || (data['routes'] as List).isEmpty) {
-      throw Exception('No walking route found between those points.');
+    final route = await _fetchRoute(from, to);
+    if (route == null) {
+      throw Exception(
+        'Could not find a walking route right now. Check your internet and try again.',
+      );
     }
 
-    final route = data['routes'][0];
     final coords = (route['geometry']['coordinates'] as List)
         .map(
           (c) => RoutePoint((c[1] as num).toDouble(), (c[0] as num).toDouble()),
