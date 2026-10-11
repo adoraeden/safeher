@@ -6,6 +6,7 @@ import '../../services/profile_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/phrase_quality_hint.dart';
 import '../onboarding/voice_enrollment_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -78,21 +79,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     },
                   ),
                   const SizedBox(height: AppSpacing.sm),
+                  PhraseQualityHint(controller: controller),
+                  const SizedBox(height: AppSpacing.sm),
                   Wrap(
                     spacing: 6,
-                    children: ['SafeHer help me', 'I need help', 'Call for help']
-                        .map(
-                          (sample) => ActionChip(
-                            label: Text(sample, style: const TextStyle(fontSize: 11)),
-                            backgroundColor: AppColors.surfaceElevated,
-                            onPressed: () {
-                              setDialogState(() {
-                                controller.text = sample;
-                              });
-                            },
-                          ),
-                        )
-                        .toList(),
+                    children:
+                        ['SafeHer help me', 'I need help', 'Call for help']
+                            .map(
+                              (sample) => ActionChip(
+                                label: Text(
+                                  sample,
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                                backgroundColor: AppColors.surfaceElevated,
+                                onPressed: () {
+                                  setDialogState(() {
+                                    controller.text = sample;
+                                  });
+                                },
+                              ),
+                            )
+                            .toList(),
                   ),
                 ],
               ),
@@ -109,8 +116,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   Navigator.pop(dialogCtx);
 
                   try {
-                    final newPhrase =
-                        await _profileService.addEmergencyPhrase(text);
+                    final newPhrase = await _profileService.addEmergencyPhrase(
+                      text,
+                    );
                     if (mounted) {
                       await _openEnrollment(newPhrase);
                     }
@@ -145,41 +153,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
       builder: (dialogCtx) => AlertDialog(
         backgroundColor: AppColors.surface,
         title: const Text('Change Emergency Phrase'),
-        content: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Changing this phrase will reset its voice profile. Old voice recordings will NOT be reused for the new phrase. You will record the new phrase 3 times.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: AppColors.warning,
-                  height: 1.4,
+        content: SingleChildScrollView(
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Changing this phrase will reset its voice profile. Old voice recordings will NOT be reused for the new phrase. You will record the new phrase 3 times.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.warning,
+                    height: 1.4,
+                  ),
                 ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              TextFormField(
-                controller: controller,
-                decoration: const InputDecoration(
-                  labelText: 'New Phrase',
-                  hintText: 'e.g. SafeHer help me',
+                const SizedBox(height: AppSpacing.md),
+                TextFormField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    labelText: 'New Phrase',
+                    hintText: 'e.g. SafeHer help me',
+                  ),
+                  validator: (val) {
+                    if (val == null || val.trim().isEmpty) {
+                      return 'Enter a phrase';
+                    }
+                    if (!RegExp(r'[a-zA-Z]{2,}').hasMatch(val.trim())) {
+                      return 'Phrase must contain actual words';
+                    }
+                    if (val.trim().length > 45) {
+                      return 'Phrase is too long (max 45 characters)';
+                    }
+                    return null;
+                  },
                 ),
-                validator: (val) {
-                  if (val == null || val.trim().isEmpty) {
-                    return 'Enter a phrase';
-                  }
-                  if (!RegExp(r'[a-zA-Z]{2,}').hasMatch(val.trim())) {
-                    return 'Phrase must contain actual words';
-                  }
-                  if (val.trim().length > 45) {
-                    return 'Phrase is too long (max 45 characters)';
-                  }
-                  return null;
-                },
-              ),
-            ],
+                const SizedBox(height: AppSpacing.sm),
+                PhraseQualityHint(controller: controller),
+              ],
+            ),
           ),
         ),
         actions: [
@@ -577,10 +589,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 3,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: phrase.isEnrolled
                       ? AppColors.success.withValues(alpha: 0.15)

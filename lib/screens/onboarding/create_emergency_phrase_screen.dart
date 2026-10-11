@@ -4,6 +4,7 @@ import '../../services/voice_enrollment_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
+import '../../widgets/phrase_quality_hint.dart';
 import 'voice_sos_guidelines_screen.dart';
 
 class CreateEmergencyPhraseScreen extends StatefulWidget {
@@ -182,6 +183,8 @@ class _CreateEmergencyPhraseScreenState
                       ),
                       validator: _validatePhrase,
                     ),
+                    const SizedBox(height: AppSpacing.sm),
+                    PhraseQualityHint(controller: _phraseController),
                     const SizedBox(height: AppSpacing.lg),
                     const Text(
                       'Example phrases (tap to choose):',

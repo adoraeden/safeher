@@ -480,7 +480,10 @@ class _VoiceEnrollmentScreenState extends State<VoiceEnrollmentScreen> {
                         children: [
                           OutlinedButton.icon(
                             onPressed: _playback,
-                            icon: Icon(_isPlaying ? Icons.stop : Icons.play_arrow, size: 18),
+                            icon: Icon(
+                              _isPlaying ? Icons.stop : Icons.play_arrow,
+                              size: 18,
+                            ),
                             label: Text(_isPlaying ? 'Stop' : 'Listen'),
                           ),
                           const SizedBox(width: AppSpacing.md),
