@@ -8,18 +8,21 @@ import '../../theme/app_spacing.dart';
 import '../../widgets/voice_input_button.dart';
 
 class AiAssistantScreen extends StatefulWidget {
-  const AiAssistantScreen({super.key});
+  final AiAssistantService? service;
+
+  const AiAssistantScreen({super.key, this.service});
 
   @override
   State<AiAssistantScreen> createState() => _AiAssistantScreenState();
 }
 
 class _AiAssistantScreenState extends State<AiAssistantScreen> {
-  final _service = AiAssistantService();
+  late final AiAssistantService _service = widget.service ?? AiAssistantService();
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
   bool _isSending = false;
+  String? _lastFailedUserMessage;
 
   static const List<_PromptSuggestion> _suggestedPrompts = [
     _PromptSuggestion(
@@ -29,7 +32,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
     ),
     _PromptSuggestion(
       title: 'My rideshare driver is taking an unfamiliar route',
-      category: 'Travel & De-escalation',
+      category: 'Travel & De-escalation Tips',
       icon: Icons.local_taxi_rounded,
     ),
     _PromptSuggestion(
@@ -67,9 +70,9 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
     final trimmedText = text.trim();
     if (trimmedText.isEmpty || _isSending) return;
 
-    // Capture history snapshot BEFORE adding the current message (excluding error bubbles)
+    // Capture clean history snapshot BEFORE adding the current message (excluding error bubbles)
     final historySnapshot = _messages
-        .where((m) => !m.text.startsWith("I couldn't respond just now"))
+        .where((m) => !m.isError && m.text.trim().isNotEmpty)
         .toList();
 
     final userMessage = ChatMessage(
@@ -81,6 +84,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
     setState(() {
       _messages.add(userMessage);
       _isSending = true;
+      _lastFailedUserMessage = null;
     });
     _inputController.clear();
     _scrollToBottom();
@@ -94,6 +98,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
               role: 'assistant',
               text: reply,
               timestamp: DateTime.now(),
+              isError: false,
             ),
           );
         });
@@ -102,12 +107,14 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
       if (mounted) {
         final errorMsg = e.toString().replaceFirst('Exception: ', '');
         setState(() {
+          _lastFailedUserMessage = trimmedText;
           _messages.add(
             ChatMessage(
               role: 'assistant',
               text:
                   "I couldn't respond just now ($errorMsg).\n\nIf this is urgent, please use the SOS button or call your local emergency number (911/112).",
               timestamp: DateTime.now(),
+              isError: true,
             ),
           );
         });
@@ -118,6 +125,24 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
         _scrollToBottom();
       }
     }
+  }
+
+  void _retryLastFailedMessage() {
+    if (_lastFailedUserMessage == null || _isSending) return;
+    final messageToRetry = _lastFailedUserMessage!;
+
+    // Remove the trailing error bubble if present
+    setState(() {
+      if (_messages.isNotEmpty && _messages.last.isError) {
+        _messages.removeLast();
+      }
+      // Also remove the user message if it's already there to avoid duplicate user bubbles
+      if (_messages.isNotEmpty && _messages.last.role == 'user' && _messages.last.text == messageToRetry) {
+        _messages.removeLast();
+      }
+    });
+
+    _send(messageToRetry);
   }
 
   @override
@@ -164,6 +189,7 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
       ),
       body: Column(
         children: [
+          // Emergency Disclaimer Banner
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(
@@ -207,10 +233,20 @@ class _AiAssistantScreenState extends State<AiAssistantScreen> {
                       if (index == _messages.length) {
                         return const _TypingBubble();
                       }
-                      return _MessageBubble(message: _messages[index]);
+                      final msg = _messages[index];
+                      return _MessageBubble(
+                        message: msg,
+                        onRetry: msg.isError ? _retryLastFailedMessage : null,
+                      );
                     },
                   ),
           ),
+          // Suggested prompts chips bar when messages are active
+          if (_messages.isNotEmpty && !_isSending)
+            _ActiveSuggestionsBar(
+              suggestions: _suggestedPrompts,
+              onSelect: _send,
+            ),
           _ChatInput(
             controller: _inputController,
             onSend: _send,
@@ -397,9 +433,52 @@ class _EmptyPromptsView extends StatelessWidget {
   }
 }
 
+class _ActiveSuggestionsBar extends StatelessWidget {
+  final List<_PromptSuggestion> suggestions;
+  final void Function(String) onSelect;
+
+  const _ActiveSuggestionsBar({
+    required this.suggestions,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 38,
+      margin: const EdgeInsets.only(bottom: AppSpacing.xs),
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+        scrollDirection: Axis.horizontal,
+        itemCount: suggestions.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final s = suggestions[index];
+          return ActionChip(
+            avatar: Icon(s.icon, size: 14, color: AppColors.primaryLight),
+            label: Text(
+              s.title.length > 32 ? '${s.title.substring(0, 32)}…' : s.title,
+              style: const TextStyle(fontSize: 11, color: AppColors.textPrimary),
+            ),
+            backgroundColor: AppColors.surface,
+            side: const BorderSide(color: AppColors.border),
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            onPressed: () => onSelect(s.title),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _MessageBubble extends StatelessWidget {
   final ChatMessage message;
-  const _MessageBubble({required this.message});
+  final VoidCallback? onRetry;
+
+  const _MessageBubble({
+    required this.message,
+    this.onRetry,
+  });
 
   String _formatTime(DateTime dt) {
     final hour = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
@@ -411,6 +490,8 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUser = message.role == 'user';
+    final isError = message.isError;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: Column(
@@ -425,18 +506,18 @@ class _MessageBubble extends StatelessWidget {
                 : MainAxisAlignment.start,
             children: [
               if (!isUser) ...[
-                const Icon(
-                  Icons.shield_rounded,
+                Icon(
+                  isError ? Icons.error_outline_rounded : Icons.shield_rounded,
                   size: 14,
-                  color: AppColors.primaryLight,
+                  color: isError ? AppColors.danger : AppColors.primaryLight,
                 ),
                 const SizedBox(width: 4),
-                const Text(
-                  'SafeHer Assistant',
+                Text(
+                  isError ? 'Notice' : 'SafeHer Assistant',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
+                    color: isError ? AppColors.danger : AppColors.textSecondary,
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -465,25 +546,57 @@ class _MessageBubble extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.82,
+              maxWidth: MediaQuery.of(context).size.width * 0.84,
             ),
             decoration: BoxDecoration(
-              color: isUser ? AppColors.primary : AppColors.surface,
+              color: isUser
+                  ? AppColors.primary
+                  : isError
+                      ? AppColors.danger.withValues(alpha: 0.08)
+                      : AppColors.surface,
               borderRadius: BorderRadius.only(
                 topLeft: const Radius.circular(AppRadius.md),
                 topRight: const Radius.circular(AppRadius.md),
                 bottomLeft: Radius.circular(isUser ? AppRadius.md : 2),
                 bottomRight: Radius.circular(isUser ? 2 : AppRadius.md),
               ),
-              border: isUser ? null : Border.all(color: AppColors.border),
+              border: isUser
+                  ? null
+                  : Border.all(
+                      color: isError
+                          ? AppColors.danger.withValues(alpha: 0.3)
+                          : AppColors.border,
+                    ),
             ),
-            child: SelectableText(
-              message.text,
-              style: TextStyle(
-                fontSize: 14,
-                color: isUser ? Colors.white : AppColors.textPrimary,
-                height: 1.4,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SelectableText(
+                  message.text,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: isUser
+                        ? Colors.white
+                        : isError
+                            ? AppColors.dangerLight
+                            : AppColors.textPrimary,
+                    height: 1.4,
+                  ),
+                ),
+                if (isError && onRetry != null) ...[
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      minimumSize: const Size(0, 30),
+                      backgroundColor: AppColors.surface,
+                    ),
+                    icon: const Icon(Icons.refresh_rounded, size: 14, color: AppColors.primaryLight),
+                    label: const Text('Retry question', style: TextStyle(fontSize: 12, color: AppColors.primaryLight)),
+                    onPressed: onRetry,
+                  ),
+                ],
+              ],
             ),
           ),
         ],
@@ -608,8 +721,6 @@ class _ChatInput extends StatelessWidget {
                   onSubmitted: isSending ? null : onSend,
                 ),
               ),
-              // Voice dictation: tap to speak, text appears in the box,
-              // then edit if needed and press send.
               Opacity(
                 opacity: isSending ? 0.4 : 1.0,
                 child: IgnorePointer(

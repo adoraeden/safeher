@@ -333,8 +333,14 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
         _showList = false;
       });
       _snack('$label saved: ${place.title}');
-    } catch (_) {
-      _snack('Could not save $label. Check your connection and try again.');
+    } catch (e) {
+      if (e.toString().contains('permission-denied')) {
+        _snack(
+          'Could not save $label: the database does not allow saved places yet (security rules).',
+        );
+      } else {
+        _snack('Could not save $label. Check your connection and try again.');
+      }
     }
   }
 

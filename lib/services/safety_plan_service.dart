@@ -30,9 +30,21 @@ class SafetyPlanService {
     });
   }
 
-  Future<void> savePlan(SafetyPlan plan) async {
+  /// Returns true if the server confirmed the save. Offline, Firestore keeps
+  /// the write on the phone and uploads it later, so this gives up waiting
+  /// after a few seconds and returns false instead of hanging.
+  Future<bool> savePlan(SafetyPlan plan) async {
     final uid = await requireUid();
-    await _docFor(uid).set(plan.toMap());
+    var confirmed = true;
+    await _docFor(uid)
+        .set(plan.toMap())
+        .timeout(
+          const Duration(seconds: 4),
+          onTimeout: () {
+            confirmed = false;
+          },
+        );
+    return confirmed;
   }
 
   /// The ids of the safety tips the user starred.

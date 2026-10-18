@@ -31,4 +31,26 @@ class ApiConfig {
     }
     return 'http://$lanIp:$port';
   }
+
+  /// Alternative candidate URLs to try if the primary network URL fails
+  /// (e.g., adb reverse over USB or Android emulator loopback).
+  static List<String> get candidateBaseUrls {
+    final primary = baseUrl;
+    final candidates = <String>[primary];
+
+    if (!kIsWeb) {
+      try {
+        if (Platform.isAndroid) {
+          if (!candidates.contains('http://127.0.0.1:$port')) {
+            candidates.add('http://127.0.0.1:$port');
+          }
+          if (!candidates.contains('http://10.0.2.2:$port')) {
+            candidates.add('http://10.0.2.2:$port');
+          }
+        }
+      } catch (_) {}
+    }
+
+    return candidates;
+  }
 }

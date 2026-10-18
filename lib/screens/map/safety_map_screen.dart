@@ -6,11 +6,12 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/safety_marker.dart';
 import '../../models/incident_report.dart';
-import '../../services/demo_safety_markers.dart';
 import '../../services/incident_service.dart';
+import '../../services/nearby_places_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
+import '../../utils/geo_utils.dart';
 import '../../widgets/safeher_map.dart';
 
 class SafetyMapScreen extends StatefulWidget {
@@ -23,8 +24,12 @@ class SafetyMapScreen extends StatefulWidget {
 class _SafetyMapScreenState extends State<SafetyMapScreen> {
   final _mapController = MapController();
   final _incidentService = IncidentService();
+  final _placesService = NearbyPlacesService();
+
   LatLng? _currentLocation;
-  List<SafetyMarker> _demoMarkers = [];
+  List<SafetyMarker> _places = [];
+  bool _placesLoading = false;
+  String? _placesError;
   String _activeFilter = 'all';
   bool _isLoading = true;
   String? _error;
@@ -66,17 +71,40 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
       if (!mounted) return;
       setState(() {
         _currentLocation = location;
-        _demoMarkers = DemoSafetyMarkers.around(
-          position.latitude,
-          position.longitude,
-        );
         _isLoading = false;
       });
+      _loadPlaces();
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = e.toString().replaceFirst('Exception: ', '');
         _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadPlaces() async {
+    final loc = _currentLocation;
+    if (loc == null) return;
+    setState(() {
+      _placesLoading = true;
+      _placesError = null;
+    });
+    try {
+      final places = await _placesService.fetchNearby(
+        loc.latitude,
+        loc.longitude,
+      );
+      if (!mounted) return;
+      setState(() {
+        _places = places;
+        _placesLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _placesError = e.toString().replaceFirst('Exception: ', '');
+        _placesLoading = false;
       });
     }
   }
@@ -119,55 +147,123 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
     }
   }
 
-  void _showDemoMarkerDetail(SafetyMarker marker) {
+  String _distanceText(SafetyMarker m) {
+    final loc = _currentLocation;
+    if (loc == null) return '';
+    final meters = haversineMeters(loc.latitude, loc.longitude, m.lat, m.lng);
+    return meters < 1000
+        ? '${meters.round()} m away'
+        : '${(meters / 1000).toStringAsFixed(1)} km away';
+  }
+
+  Future<void> _openDirections(SafetyMarker m) async {
+    final uri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1&destination=${m.lat},${m.lng}&travelmode=walking',
+    );
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open directions.')),
+        );
+      }
+    }
+  }
+
+  void _showPlaceDetail(SafetyMarker marker) {
+    final phone = marker.phone;
+    final cleanPhone = phone?.replaceAll(RegExp(r'[^0-9+]'), '');
     showModalBottomSheet(
       context: context,
       backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
       ),
-      builder: (context) => Padding(
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  _iconForType(marker.type),
-                  color: _colorForType(marker.type),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    marker.name,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    _iconForType(marker.type),
+                    color: _colorForType(marker.type),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      marker.name,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
+                      ),
                     ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _distanceText(marker),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.primaryLight,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                marker.description,
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: AppColors.textSecondary,
+                  height: 1.4,
+                ),
+              ),
+              if (phone != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'Phone: $phone',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textPrimary,
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              marker.description,
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.textSecondary,
-                height: 1.4,
+              const SizedBox(height: AppSpacing.md),
+              Row(
+                children: [
+                  if (cleanPhone != null && cleanPhone.isNotEmpty) ...[
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () =>
+                            launchUrl(Uri(scheme: 'tel', path: cleanPhone)),
+                        icon: const Icon(Icons.call, size: 16),
+                        label: const Text('Call'),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                  ],
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _openDirections(marker),
+                      icon: const Icon(Icons.directions_walk, size: 16),
+                      label: const Text('Directions'),
+                    ),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            if (marker.phone != null)
-              ElevatedButton.icon(
-                onPressed: () => launchUrl(Uri.parse('tel:${marker.phone}')),
-                icon: const Icon(Icons.call, size: 16),
-                label: Text('Call ${marker.phone}'),
+              const SizedBox(height: AppSpacing.md),
+              const Text(
+                'From OpenStreetMap. Details may be out of date. In an emergency call 112.',
+                style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -226,6 +322,61 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
     );
   }
 
+  Widget _buildStatusCard() {
+    Widget content;
+    if (_placesLoading) {
+      content = const Row(
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Finding nearby police stations, hospitals and shelters...',
+              style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            ),
+          ),
+        ],
+      );
+    } else if (_placesError != null) {
+      content = Row(
+        children: [
+          Expanded(
+            child: Text(
+              _placesError!,
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppColors.dangerLight,
+              ),
+            ),
+          ),
+          TextButton(onPressed: _loadPlaces, child: const Text('Retry')),
+        ],
+      );
+    } else {
+      content = Text(
+        _places.isEmpty
+            ? 'No police stations, hospitals or shelters were found nearby in OpenStreetMap. In an emergency call 112.'
+            : 'Places are from OpenStreetMap and may be out of date. Red "Reported" pins are community reports. Emergency: 112.',
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 10, color: AppColors.textSecondary),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: 0.95),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: content,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -250,14 +401,10 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                     .where((r) => r.lat != null && r.lng != null)
                     .toList();
 
-                final visibleDemo =
+                final visiblePlaces =
                     _activeFilter == 'all' || _activeFilter == 'incident'
-                    ? (_activeFilter == 'incident'
-                          ? <SafetyMarker>[]
-                          : _demoMarkers)
-                    : _demoMarkers
-                          .where((m) => m.type == _activeFilter)
-                          .toList();
+                    ? (_activeFilter == 'incident' ? <SafetyMarker>[] : _places)
+                    : _places.where((m) => m.type == _activeFilter).toList();
 
                 final visibleIncidents =
                     (_activeFilter == 'all' || _activeFilter == 'incident')
@@ -267,11 +414,11 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                 int countFor(String key) {
                   switch (key) {
                     case 'all':
-                      return _demoMarkers.length + incidents.length;
+                      return _places.length + incidents.length;
                     case 'incident':
                       return incidents.length;
                     default:
-                      return _demoMarkers.where((m) => m.type == key).length;
+                      return _places.where((m) => m.type == key).length;
                   }
                 }
 
@@ -293,13 +440,13 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                               height: 48,
                               child: const MyLocationDot(),
                             ),
-                            ...visibleDemo.map(
+                            ...visiblePlaces.map(
                               (marker) => Marker(
                                 point: LatLng(marker.lat, marker.lng),
                                 width: 40,
                                 height: 40,
                                 child: GestureDetector(
-                                  onTap: () => _showDemoMarkerDetail(marker),
+                                  onTap: () => _showPlaceDetail(marker),
                                   child: MapPinBadge(
                                     color: _colorForType(marker.type),
                                     icon: _iconForType(marker.type),
@@ -374,7 +521,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                     ),
                     Positioned(
                       right: AppSpacing.md,
-                      bottom: 78,
+                      bottom: 96,
                       child: FloatingActionButton.small(
                         heroTag: 'safety_map_recenter',
                         backgroundColor: AppColors.surface,
@@ -387,25 +534,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                       bottom: 28,
                       left: AppSpacing.md,
                       right: AppSpacing.md,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.surface.withValues(alpha: 0.95),
-                          borderRadius: BorderRadius.circular(AppRadius.md),
-                          border: Border.all(color: AppColors.border),
-                        ),
-                        child: const Text(
-                          'Police/hospital/shelter pins are demo data. Red "Reported" pins are real community submissions.',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: AppColors.textSecondary,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
+                      child: _buildStatusCard(),
                     ),
                   ],
                 );

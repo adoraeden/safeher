@@ -90,7 +90,7 @@ class _SafetyPlanScreenState extends State<SafetyPlanScreen> {
   Future<void> _save() async {
     setState(() => _isSaving = true);
     try {
-      await _service.savePlan(
+      final synced = await _service.savePlan(
         SafetyPlan(
           safeHavens: _havens,
           routes: _routes,
@@ -102,8 +102,13 @@ class _SafetyPlanScreenState extends State<SafetyPlanScreen> {
       );
       if (mounted) {
         setState(() => _dirty = false);
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Safety plan saved')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              synced ? 'Safety plan saved' : 'Saved on this phone. It will upload when you are back online.',
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

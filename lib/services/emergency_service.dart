@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../models/emergency_contact.dart';
 import '../models/emergency_event.dart';
 import 'auth_helpers.dart';
 import 'contacts_service.dart';
@@ -67,23 +68,47 @@ class EmergencyService {
   }) async {
     final uid = await requireUid();
     final clock = Stopwatch()..start();
-    debugPrint('[SOS] getting location...');
-    final position = await _getCurrentLocation();
-    debugPrint('[SOS] got location after ${clock.elapsedMilliseconds} ms');
-    final contacts = await _contactsService.getContactsOnce();
+
+    // The SMS must go out even if the location cannot be found.
+    Position? position;
+    try {
+      position = await _getCurrentLocation();
+    } catch (e) {
+      debugPrint('[SOS] Could not get a location: $e');
+    }
+    debugPrint(
+      '[SOS] location step finished after ${clock.elapsedMilliseconds} ms (found: ${position != null})',
+    );
+
+    List<EmergencyContact> contacts = [];
+    try {
+      contacts = await _contactsService.getContactsOnce();
+    } catch (e) {
+      debugPrint('[SOS] Could not load contacts: $e');
+    }
     final notifyList = contacts.where((c) => c.notifyOnSos).toList();
 
     final name = FirebaseAuth.instance.currentUser?.displayName;
     final who = (name == null || name.trim().isEmpty)
         ? 'A SafeHer user'
         : name.trim();
-    final mapUrl = LocationShareService.formatMapUrl(
-      position.latitude,
-      position.longitude,
-    );
-    final message =
-        '$who needs help! SOS triggered from SafeHer. '
-        'Location: $mapUrl';
+
+    final String message;
+    if (position != null) {
+      final mapUrl = LocationShareService.formatMapUrl(
+        position.latitude,
+        position.longitude,
+      );
+      final coords =
+          '${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}';
+      message =
+          '$who needs help! SOS triggered from SafeHer. '
+          'Location: $mapUrl ($coords)';
+    } else {
+      message =
+          '$who needs help! SOS triggered from SafeHer, but the '
+          'location could not be found. Please call $who right away.';
+    }
 
     // SMS must never stop the SOS, so every failure is caught here.
     bool canSms = false;
@@ -113,8 +138,9 @@ class EmergencyService {
     debugPrint('[SOS] SMS step done after ${clock.elapsedMilliseconds} ms');
 
     final data = {
-      'lat': position.latitude,
-      'lng': position.longitude,
+      'lat': position?.latitude ?? 0.0,
+      'lng': position?.longitude ?? 0.0,
+      'locationFound': position != null,
       'timestamp': DateTime.now().toIso8601String(),
       'status': 'ACTIVE',
       'source': source,
@@ -122,17 +148,24 @@ class EmergencyService {
       'notifiedContacts': notifiedContacts,
     };
 
-    final docRef = await _firestore
+    // Save in the background. Offline, Firestore keeps the record and uploads
+    // it later, so SOS must never wait for it.
+    final docRef = _firestore
         .collection('users')
         .doc(uid)
         .collection('emergency_events')
-        .add(data);
+        .doc();
+    docRef.set(data).catchError((Object e) {
+      debugPrint('[SOS] Could not save the event yet: $e');
+    });
 
     return EmergencyEvent.fromMap(docRef.id, data);
   }
 
   Future<void> resolveSos(String eventId) async {
     final uid = await requireUid();
+    // Do not wait for the server forever. Offline, the update is kept and
+    // uploaded later.
     await _firestore
         .collection('users')
         .doc(uid)
@@ -141,7 +174,8 @@ class EmergencyService {
         .update({
           'status': 'RESOLVED',
           'resolvedAt': DateTime.now().toIso8601String(),
-        });
+        })
+        .timeout(const Duration(seconds: 4), onTimeout: () {});
   }
 
   Stream<List<EmergencyEvent>> watchEvents() {

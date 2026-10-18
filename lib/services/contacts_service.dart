@@ -24,9 +24,25 @@ class ContactsService {
     });
   }
 
+  /// Used by SOS. It reads the copy saved on the phone first, which is
+  /// instant even with a weak or missing connection. Only if the phone has
+  /// no copy does it ask the server, and it will not wait longer than 8 seconds.
   Future<List<EmergencyContact>> getContactsOnce() async {
     final uid = await requireUid();
-    final snapshot = await _contactsRefFor(uid).get();
+    final ref = _contactsRefFor(uid);
+
+    try {
+      final cached = await ref.get(const GetOptions(source: Source.cache));
+      if (cached.docs.isNotEmpty) {
+        return cached.docs
+            .map((doc) => EmergencyContact.fromMap(doc.id, doc.data()))
+            .toList();
+      }
+    } catch (_) {
+      // No saved copy yet. Fall through to the server.
+    }
+
+    final snapshot = await ref.get().timeout(const Duration(seconds: 8));
     return snapshot.docs
         .map((doc) => EmergencyContact.fromMap(doc.id, doc.data()))
         .toList();
