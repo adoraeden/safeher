@@ -6,6 +6,7 @@ import '../../services/voice_guard_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_radius.dart';
+import '../../widgets/call_emergency_button.dart';
 
 class SosActiveScreen extends StatefulWidget {
   final EmergencyEvent event;
@@ -114,6 +115,8 @@ class _SosActiveScreenState extends State<SosActiveScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _statusBanner(contacts),
+                const SizedBox(height: AppSpacing.lg),
+                const CallEmergencyButton(),
                 const SizedBox(height: AppSpacing.lg),
                 Center(
                   child: Column(
