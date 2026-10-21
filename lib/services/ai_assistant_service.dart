@@ -1,3 +1,4 @@
+import 'dart:async' show TimeoutException;
 import 'dart:convert';
 import 'dart:io' show SocketException;
 
@@ -73,13 +74,19 @@ class AiAssistantService {
                 'history': cleanHistory,
               }),
             )
-            .timeout(const Duration(seconds: 35));
+            .timeout(const Duration(seconds: 15));
         // If we reached a server response, break immediately
         break;
       } on SocketException catch (e) {
         lastNetworkError = e;
         continue;
       } on http.ClientException catch (e) {
+        lastNetworkError = e;
+        continue;
+      } on TimeoutException catch (e) {
+        lastNetworkError = e;
+        continue;
+      } catch (e) {
         lastNetworkError = e;
         continue;
       }
