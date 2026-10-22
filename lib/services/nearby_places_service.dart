@@ -1,16 +1,19 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
 import '../models/safety_marker.dart';
 
-/// Finds real police stations, hospitals and women's support centers near a
-/// point, from OpenStreetMap data (via the free Overpass service).
+/// Finds nearby police stations, hospitals and women's support centers
+/// using OpenStreetMap data through the Overpass API.
 class NearbyPlacesService {
   static const _endpoints = [
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
     'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter',
   ];
+
   static const _headers = {
     'User-Agent': 'com.safeher.women_safety (college project)',
     'Content-Type': 'application/x-www-form-urlencoded',
@@ -20,13 +23,14 @@ class NearbyPlacesService {
   static const _shelterRadiusMeters = 12000;
   static const _cacheMinutes = 10;
 
-  // Remember the last result so moving around the map does not ask again.
+  // Cache the last result to reduce repeated requests.
   static String? _cacheKey;
   static DateTime? _cacheTime;
   static List<SafetyMarker> _cacheData = [];
 
   Future<List<SafetyMarker>> fetchNearby(double lat, double lng) async {
     final key = '${lat.toStringAsFixed(2)},${lng.toStringAsFixed(2)}';
+
     if (_cacheKey == key &&
         _cacheTime != null &&
         DateTime.now().difference(_cacheTime!).inMinutes < _cacheMinutes) {
@@ -44,25 +48,53 @@ out center 40;
 out center 30;
 ''';
 
+    String lastFailure =
+        'OpenStreetMap data services are temporarily unavailable.';
+
     for (final endpoint in _endpoints) {
       try {
         final response = await http
             .post(Uri.parse(endpoint), headers: _headers, body: {'data': query})
             .timeout(const Duration(seconds: 30));
-        if (response.statusCode != 200) continue;
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final places = _parse((data['elements'] as List?) ?? const []);
+
+        if (response.statusCode == 429) {
+          lastFailure =
+              'The map data service is busy. Please try again shortly.';
+          continue;
+        }
+
+        if (response.statusCode != 200) {
+          lastFailure =
+              'Map data service returned HTTP ${response.statusCode}.';
+          continue;
+        }
+
+        final decoded = jsonDecode(response.body);
+
+        if (decoded is! Map<String, dynamic> || decoded['elements'] is! List) {
+          lastFailure = 'The map data service returned an unexpected response.';
+          continue;
+        }
+
+        final places = _parse(decoded['elements'] as List);
+
         _cacheKey = key;
         _cacheTime = DateTime.now();
         _cacheData = places;
+
         return places;
-      } catch (_) {
-        // This server failed, so try the next one.
+      } on TimeoutException {
+        lastFailure =
+            'Nearby places request timed out. The map service may be busy.';
+      } on FormatException {
+        lastFailure = 'The map data service returned an invalid response.';
+      } catch (e) {
+        lastFailure =
+            'Could not contact the map data service (${e.runtimeType}).';
       }
     }
-    throw Exception(
-      'Could not load nearby places right now. Check your internet connection and try again.',
-    );
+
+    throw Exception(lastFailure);
   }
 
   List<SafetyMarker> _parse(List elements) {
@@ -71,32 +103,38 @@ out center 30;
 
     for (final el in elements) {
       if (el is! Map) continue;
-      final tags = (el['tags'] is Map)
+
+      final tags = el['tags'] is Map
           ? Map<String, dynamic>.from(el['tags'] as Map)
           : <String, dynamic>{};
-      String? tag(String k) {
-        final v = tags[k]?.toString().trim();
-        return (v == null || v.isEmpty) ? null : v;
+
+      String? tag(String key) {
+        final value = tags[key]?.toString().trim();
+        return value == null || value.isEmpty ? null : value;
       }
 
-      // Nodes carry lat/lon; buildings (ways) carry a center point.
-      double? lat;
-      double? lng;
+      // Nodes have lat/lon. Ways and relations may have a center point.
+      double? placeLat;
+      double? placeLng;
+
       if (el['lat'] is num && el['lon'] is num) {
-        lat = (el['lat'] as num).toDouble();
-        lng = (el['lon'] as num).toDouble();
+        placeLat = (el['lat'] as num).toDouble();
+        placeLng = (el['lon'] as num).toDouble();
       } else if (el['center'] is Map) {
-        final c = el['center'] as Map;
-        if (c['lat'] is num && c['lon'] is num) {
-          lat = (c['lat'] as num).toDouble();
-          lng = (c['lon'] as num).toDouble();
+        final center = el['center'] as Map;
+
+        if (center['lat'] is num && center['lon'] is num) {
+          placeLat = (center['lat'] as num).toDouble();
+          placeLng = (center['lon'] as num).toDouble();
         }
       }
-      if (lat == null || lng == null) continue;
+
+      if (placeLat == null || placeLng == null) continue;
 
       final amenity = tag('amenity');
       final String type;
       final String fallbackName;
+
       if (amenity == 'police') {
         type = 'police';
         fallbackName = 'Police station';
@@ -123,22 +161,36 @@ out center 30;
       ].whereType<String>().join(', ');
 
       final parts = <String>[];
-      if (address.isNotEmpty) parts.add(address);
+
+      if (address.isNotEmpty) {
+        parts.add(address);
+      }
+
       if (type == 'hospital' && tag('emergency') == 'yes') {
         parts.add('Emergency department listed');
       }
-      final hours = tag('opening_hours');
-      if (hours != null) parts.add('Hours: $hours');
-      final operator = tag('operator');
-      if (operator != null) parts.add('Run by $operator');
 
-      // Phone numbers may list several; keep the first.
+      final hours = tag('opening_hours');
+      if (hours != null) {
+        parts.add('Hours: $hours');
+      }
+
+      final operator = tag('operator');
+      if (operator != null) {
+        parts.add('Run by $operator');
+      }
+
+      // Keep the first phone number if several are listed.
       final rawPhone =
           tag('phone') ?? tag('contact:phone') ?? tag('contact:mobile');
+
       String? phone;
+
       if (rawPhone != null) {
         final first = rawPhone.split(RegExp(r'[;,/]')).first.trim();
-        if (first.isNotEmpty) phone = first;
+        if (first.isNotEmpty) {
+          phone = first;
+        }
       }
 
       places.add(
@@ -146,8 +198,8 @@ out center 30;
           id: id,
           name: name,
           type: type,
-          lat: lat,
-          lng: lng,
+          lat: placeLat,
+          lng: placeLng,
           description: parts.isEmpty
               ? 'No more details are listed for this place.'
               : parts.join('\n'),
@@ -155,6 +207,7 @@ out center 30;
         ),
       );
     }
+
     return places;
   }
 }
