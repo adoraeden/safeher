@@ -34,12 +34,18 @@ android {
     }
 
     buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
-        }
+    release {
+        // Apply R8 shrinking with rules needed by Voice Guard's JNA/Vosk.
+        isMinifyEnabled = true
+        proguardFiles(
+            getDefaultProguardFile("proguard-android-optimize.txt"),
+            "proguard-rules.pro"
+        )
+
+        // Keep the existing signing configuration.
+        signingConfig = signingConfigs.getByName("debug")
     }
+}
 }
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
