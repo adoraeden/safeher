@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/place_search_service.dart';
 import '../../services/route_service.dart';
@@ -15,6 +16,8 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/safeher_map.dart';
+
+enum _Mode { walk, car, transit }
 
 class RouteCheckScreen extends StatefulWidget {
   const RouteCheckScreen({super.key});
@@ -41,6 +44,7 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
   RouteCheckResult? _result;
   Map<String, SavedPlace> _saved = {};
   List<PlaceResult> _suggestions = [];
+  _Mode _mode = _Mode.walk;
 
   bool _isLoadingLocation = true;
   bool _isChecking = false;
@@ -123,18 +127,19 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
   }
 
   void _fitRoute() {
-    final result = _result;
     final loc = _currentLocation;
-    if (result == null || result.path.isEmpty || loc == null) return;
+    final dest = _selectedDestination;
+    if (loc == null || dest == null) return;
     try {
-      final points = [
+      final points = <LatLng>[
         LatLng(loc.lat, loc.lng),
-        ...result.path.map((p) => LatLng(p.lat, p.lng)),
+        LatLng(dest.lat, dest.lng),
+        ...?_result?.path.map((p) => LatLng(p.lat, p.lng)),
       ];
       _mapController.fitCamera(
         CameraFit.bounds(
           bounds: LatLngBounds.fromPoints(points),
-          padding: const EdgeInsets.fromLTRB(40, 130, 40, 200),
+          padding: const EdgeInsets.fromLTRB(40, 160, 40, 220),
         ),
       );
     } catch (_) {}
@@ -237,6 +242,16 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
     return _routeService.geocodeAddress(text);
   }
 
+  void _setMode(_Mode mode) {
+    if (_mode == mode) return;
+    setState(() {
+      _mode = mode;
+      _result = null;
+      _error = null;
+    });
+    if (_selectedDestination != null) _checkRoute();
+  }
+
   Future<void> _checkRoute() async {
     final from = _currentLocation;
     if (from == null) return;
@@ -257,15 +272,23 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
           'Could not find that place. Pick one from the suggestions, or add the area or city.',
         );
       }
-      final result = await _routeService.checkRoute(
-        from: from,
-        to: destination,
-      );
       if (!mounted) return;
-      setState(() {
-        _result = result;
-        _selectedDestination = destination;
-      });
+
+      if (_mode == _Mode.transit) {
+        // Bus and train routes are opened in Google Maps.
+        setState(() => _selectedDestination = destination);
+      } else {
+        final result = await _routeService.checkRoute(
+          from: from,
+          to: destination,
+          mode: _mode == _Mode.car ? TravelMode.car : TravelMode.walk,
+        );
+        if (!mounted) return;
+        setState(() {
+          _result = result;
+          _selectedDestination = destination;
+        });
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) => _fitRoute());
     } catch (e) {
       if (mounted) {
@@ -281,6 +304,20 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
       _selectPlace(_suggestions.first);
     } else if (_settingShortcut == null) {
       _checkRoute();
+    }
+  }
+
+  Future<void> _openTransit() async {
+    final loc = _currentLocation;
+    final dest = _selectedDestination;
+    if (loc == null || dest == null) return;
+    final uri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1&origin=${loc.lat},${loc.lng}&destination=${dest.lat},${dest.lng}&travelmode=transit',
+    );
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      _snack('Could not open Google Maps.');
     }
   }
 
@@ -502,8 +539,23 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
     return AppColors.dangerLight;
   }
 
+  String _formatDuration(double seconds) {
+    final minutes = (seconds / 60).round();
+    if (minutes < 60) return '$minutes min';
+    final h = minutes ~/ 60;
+    final m = minutes % 60;
+    return m == 0 ? '$h h' : '$h h $m min';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final showTransit =
+        _mode == _Mode.transit &&
+        _selectedDestination != null &&
+        !_isChecking &&
+        _currentLocation != null;
+    final hasCard = _result != null || showTransit;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Route Check')),
       body: Stack(
@@ -513,7 +565,7 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
           if (_currentLocation != null)
             Positioned(
               right: AppSpacing.md,
-              bottom: _result != null ? 160 : AppSpacing.lg,
+              bottom: hasCard ? 210 : AppSpacing.lg,
               child: FloatingActionButton.small(
                 heroTag: 'route_recenter',
                 backgroundColor: AppColors.surface,
@@ -528,6 +580,13 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
               left: AppSpacing.md,
               right: AppSpacing.md,
               child: _buildResultCard(),
+            ),
+          if (showTransit)
+            Positioned(
+              bottom: 30,
+              left: AppSpacing.md,
+              right: AppSpacing.md,
+              child: _buildTransitCard(),
             ),
         ],
       ),
@@ -574,6 +633,7 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
     }
 
     final result = _result;
+    final dest = _selectedDestination;
     return FlutterMap(
       mapController: _mapController,
       options: MapOptions(
@@ -606,9 +666,9 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
               height: 48,
               child: const MyLocationDot(),
             ),
-            if (result != null && result.path.isNotEmpty)
+            if (dest != null)
               Marker(
-                point: LatLng(result.path.last.lat, result.path.last.lng),
+                point: LatLng(dest.lat, dest.lng),
                 width: 48,
                 height: 52,
                 alignment: Alignment.topCenter,
@@ -618,6 +678,28 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
         ),
         const SafeHerAttribution(),
       ],
+    );
+  }
+
+  Widget _modeChip(_Mode mode, String label, IconData icon) {
+    final selected = _mode == mode;
+    return ChoiceChip(
+      showCheckmark: false,
+      elevation: 3,
+      avatar: Icon(
+        icon,
+        size: 18,
+        color: selected ? Colors.white : AppColors.textSecondary,
+      ),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      selected: selected,
+      onSelected: (_) => _setMode(mode),
+      selectedColor: AppColors.primary,
+      backgroundColor: AppColors.surface,
+      side: const BorderSide(color: AppColors.border),
+      labelStyle: TextStyle(
+        color: selected ? Colors.white : AppColors.textPrimary,
+      ),
     );
   }
 
@@ -778,7 +860,24 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
                     ],
                   ),
                 )
-              else
+              else ...[
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _modeChip(_Mode.walk, 'Walk', Icons.directions_walk),
+                      const SizedBox(width: 8),
+                      _modeChip(_Mode.car, 'Car', Icons.directions_car),
+                      const SizedBox(width: 8),
+                      _modeChip(
+                        _Mode.transit,
+                        'Bus / Train',
+                        Icons.directions_transit,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -801,6 +900,7 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
                     ],
                   ),
                 ),
+              ],
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
@@ -913,6 +1013,9 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
   Widget _buildResultCard() {
     final result = _result!;
     final color = _noteColor(result.nearbyReportCount);
+    final isCar = result.mode == TravelMode.car;
+    final tooFarToWalk = !isCar && result.distanceMeters > 20000;
+
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
@@ -927,10 +1030,16 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.directions_walk, size: 18, color: color),
+              Icon(
+                isCar ? Icons.directions_car : Icons.directions_walk,
+                size: 18,
+                color: color,
+              ),
               const SizedBox(width: 8),
               Text(
-                '${(result.durationSeconds / 60).round()} min walk',
+                isCar
+                    ? '${_formatDuration(result.durationSeconds)} by car'
+                    : '${_formatDuration(result.durationSeconds)} walk',
                 style: const TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,
@@ -973,9 +1082,80 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
               height: 1.35,
             ),
           ),
+          if (tooFarToWalk) ...[
+            const SizedBox(height: 6),
+            const Text(
+              'This is a long way to walk. Try Car or Bus / Train.',
+              style: TextStyle(fontSize: 12, color: AppColors.warning),
+            ),
+          ],
           const SizedBox(height: 4),
+          Text(
+            isCar
+                ? 'Estimate without live traffic. Safety information only, never a guarantee a route is safe.'
+                : 'Estimate at a 5 km/h walking pace. Safety information only, never a guarantee a route is safe.',
+            style: const TextStyle(
+              fontSize: 10,
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransitCard() {
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.border),
+        boxShadow: const [BoxShadow(color: Colors.black54, blurRadius: 12)],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(
+                Icons.directions_transit,
+                size: 18,
+                color: AppColors.primaryLight,
+              ),
+              SizedBox(width: 8),
+              Text(
+                'Bus and train',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           const Text(
-            'Safety information only, never a guarantee a route is safe.',
+            'SafeHer cannot plan bus and train trips itself. Google Maps shows live public-transport options, times and fares for this trip.',
+            style: TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _openTransit,
+              icon: const Icon(Icons.open_in_new, size: 16),
+              label: const Text('Open in Google Maps'),
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'The incident check works only for walking and car routes.',
             style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
           ),
         ],

@@ -69,12 +69,9 @@ class AiAssistantService {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer $idToken',
               },
-              body: jsonEncode({
-                'message': message,
-                'history': cleanHistory,
-              }),
+              body: jsonEncode({'message': message, 'history': cleanHistory}),
             )
-            .timeout(const Duration(seconds: 15));
+            .timeout(const Duration(seconds: 70));
         // If we reached a server response, break immediately
         break;
       } on SocketException catch (e) {
@@ -99,7 +96,9 @@ class AiAssistantService {
           'Make sure the backend is running and your phone is on the same network.',
         );
       } else if (lastNetworkError is http.ClientException) {
-        throw Exception('Network error: ${lastNetworkError.message}. Please try again.');
+        throw Exception(
+          'Network error: ${lastNetworkError.message}. Please try again.',
+        );
       }
       throw Exception(
         'Request timed out or server unreachable. Please try again.',
@@ -111,7 +110,9 @@ class AiAssistantService {
       final data = jsonDecode(response.body) as Map<String, dynamic>?;
       final reply = data?['reply'] as String?;
       if (reply == null || reply.trim().isEmpty) {
-        throw Exception('Received an empty response from AI. Please try again.');
+        throw Exception(
+          'Received an empty response from AI. Please try again.',
+        );
       }
       return reply.trim();
     }
@@ -136,8 +137,7 @@ class AiAssistantService {
         );
       case 429:
         throw Exception(
-          serverError ??
-              'The AI assistant is busy right now. Please wait a moment and try again.',
+          serverError ?? 'The AI assistant is busy right now. Please wait a moment and try again.',
         );
       case 504:
         throw Exception(
@@ -146,8 +146,7 @@ class AiAssistantService {
         );
       case 500:
         throw Exception(
-          serverError ??
-              'The server has a configuration issue. Please check backend environment.',
+          serverError ?? 'The server has a configuration issue. Please check backend environment.',
         );
       default:
         throw Exception(

@@ -39,14 +39,24 @@ class PlaceSearchService {
       params['lon'] = '$nearLng';
     }
 
-    final response = await http
-        .get(Uri.https('photon.komoot.io', '/api/', params), headers: _headers)
-        .timeout(const Duration(seconds: 8));
-    if (response.statusCode != 200) {
+    Map<String, dynamic>? data;
+    try {
+      final response = await http
+          .get(Uri.https('photon.komoot.io', '/api/', params), headers: _headers)
+          .timeout(const Duration(milliseconds: 3500));
+      if (response.statusCode == 200) {
+        data = jsonDecode(response.body) as Map<String, dynamic>;
+      }
+    } catch (_) {
+      // Photon call failed, will try fallback below
+    }
+
+    if (data == null) {
+      final fallback = await _searchNominatim(q, limit: limit);
+      if (fallback.isNotEmpty) return fallback;
       throw Exception('Place search is unavailable right now.');
     }
 
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
     final features = (data['features'] as List?) ?? const [];
     final seen = <String>{};
     final results = <PlaceResult>[];
@@ -103,5 +113,39 @@ class PlaceSearchService {
       );
     }
     return results;
+  }
+
+  Future<List<PlaceResult>> _searchNominatim(
+    String query, {
+    int limit = 6,
+  }) async {
+    try {
+      final uri = Uri.parse(
+        'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=$limit&addressdetails=1',
+      );
+      final response = await http
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 3));
+      if (response.statusCode != 200) return [];
+      final list = jsonDecode(response.body) as List;
+      final results = <PlaceResult>[];
+      for (final item in list) {
+        if (item is! Map) continue;
+        final name = (item['name'] ?? item['display_name'] ?? '').toString();
+        final displayName = (item['display_name'] ?? '').toString();
+        final lat = double.tryParse(item['lat']?.toString() ?? '');
+        final lon = double.tryParse(item['lon']?.toString() ?? '');
+        if (lat == null || lon == null) continue;
+        final title =
+            name.isNotEmpty ? name : displayName.split(',').first.trim();
+        final subtitle = displayName != title ? displayName : '';
+        results.add(
+          PlaceResult(title: title, subtitle: subtitle, lat: lat, lng: lon),
+        );
+      }
+      return results;
+    } catch (_) {
+      return [];
+    }
   }
 }
