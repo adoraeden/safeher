@@ -137,7 +137,7 @@ safeher-backend/    # Express + Gemini (optional for AI)
 
 Exact paths and Firestore collections should be confirmed in the repo (`collection(`, `doc(`, `set(`, etc.).
 
-Typical data shape (verify in code and Security Rules):
+Typical data shape:
 
 - `users/{uid}` — profile, phrases, enrollment flags  
 - Subcollections under user (as implemented): contacts, emergency events, safety plan  
@@ -146,7 +146,7 @@ Typical data shape (verify in code and Security Rules):
 
 ---
 
-## Status (honest)
+## Status 
 
 | Area | Status |
 |------|--------|
@@ -157,8 +157,6 @@ Typical data shape (verify in code and Security Rules):
 | AI Assistant | Code present; **production backend hosting** still required for phone-only use |
 | Timed live location | Incomplete |
 | Play Store | Not recommended yet (`SEND_SMS` policy) |
-
-This project should document **what the code does and what you tested**, not earlier agent claims. Re-run device tests after native or Gradle changes (Vosk can break under release shrinking).
 
 ---
 
@@ -261,7 +259,7 @@ Device:
 
 ---
 
-## Emergency numbers (India — re-verify before any public release)
+## Emergency numbers
 
 112 · 100 · 101 · 102 · 108 · 181 · 1091
 
