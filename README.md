@@ -178,7 +178,8 @@ flutter build apk --release
 # output: build/app/outputs/flutter-apk/
 ```
 
-### Backend (AI only)
+### Backend 
+
 
 1. `cd safeher-backend` (or your backend folder).
 2. Copy `.env.example` → `.env` with Firebase Admin credentials and Gemini API key.
