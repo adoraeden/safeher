@@ -51,15 +51,20 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
   Future<void> _loadLocation() async {
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) throw Exception('Location services are turned off.');
+      if (!serviceEnabled) {
+        throw Exception('Location services are turned off.');
+      }
 
       var permission = await Geolocator.checkPermission();
+
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
+
         if (permission == LocationPermission.denied) {
           throw Exception('Location permission denied.');
         }
       }
+
       if (permission == LocationPermission.deniedForever) {
         throw Exception(
           'Location permission permanently denied — enable it in settings.',
@@ -68,14 +73,18 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
 
       final position = await Geolocator.getCurrentPosition();
       final location = LatLng(position.latitude, position.longitude);
+
       if (!mounted) return;
+
       setState(() {
         _currentLocation = location;
         _isLoading = false;
       });
+
       _loadPlaces();
     } catch (e) {
       if (!mounted) return;
+
       setState(() {
         _error = e.toString().replaceFirst('Exception: ', '');
         _isLoading = false;
@@ -83,25 +92,31 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
     }
   }
 
-  Future<void> _loadPlaces() async {
+  Future<void> _loadPlaces({bool forceRefresh = false}) async {
     final loc = _currentLocation;
-    if (loc == null) return;
+    if (loc == null || _placesLoading) return;
+
     setState(() {
       _placesLoading = true;
       _placesError = null;
     });
+
     try {
       final places = await _placesService.fetchNearby(
         loc.latitude,
         loc.longitude,
+        forceRefresh: forceRefresh,
       );
+
       if (!mounted) return;
+
       setState(() {
         _places = places;
         _placesLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
+
       setState(() {
         _placesError = e.toString().replaceFirst('Exception: ', '');
         _placesLoading = false;
@@ -112,6 +127,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
   void _recenter() {
     final loc = _currentLocation;
     if (loc == null) return;
+
     try {
       _mapController.move(loc, 15);
     } catch (_) {}
@@ -150,7 +166,9 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
   String _distanceText(SafetyMarker m) {
     final loc = _currentLocation;
     if (loc == null) return '';
+
     final meters = haversineMeters(loc.latitude, loc.longitude, m.lat, m.lng);
+
     return meters < 1000
         ? '${meters.round()} m away'
         : '${(meters / 1000).toStringAsFixed(1)} km away';
@@ -160,6 +178,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
     final uri = Uri.parse(
       'https://www.google.com/maps/dir/?api=1&destination=${m.lat},${m.lng}&travelmode=walking',
     );
+
     try {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } catch (_) {
@@ -174,6 +193,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
   void _showPlaceDetail(SafetyMarker marker) {
     final phone = marker.phone;
     final cleanPhone = phone?.replaceAll(RegExp(r'[^0-9+]'), '');
+
     showModalBottomSheet(
       context: context,
       backgroundColor: AppColors.surface,
@@ -310,7 +330,10 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Reported ${report.timestamp.day}/${report.timestamp.month} ${report.timestamp.hour.toString().padLeft(2, '0')}:${report.timestamp.minute.toString().padLeft(2, '0')} — community submitted',
+              'Reported ${report.timestamp.day}/${report.timestamp.month} '
+              '${report.timestamp.hour.toString().padLeft(2, '0')}:'
+              '${report.timestamp.minute.toString().padLeft(2, '0')} '
+              '— community submitted',
               style: const TextStyle(
                 fontSize: 11,
                 color: AppColors.textSecondary,
@@ -324,6 +347,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
 
   Widget _buildStatusCard() {
     Widget content;
+
     if (_placesLoading) {
       content = const Row(
         children: [
@@ -489,6 +513,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                           itemBuilder: (context, index) {
                             final f = _filters[index];
                             final isActive = _activeFilter == f.$1;
+
                             return ChoiceChip(
                               showCheckmark: false,
                               elevation: 3,
@@ -521,6 +546,28 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
                     ),
                     Positioned(
                       right: AppSpacing.md,
+                      bottom: 152,
+                      child: FloatingActionButton.small(
+                        heroTag: 'safety_map_refresh',
+                        tooltip: 'Refresh nearby places',
+                        backgroundColor: AppColors.surface,
+                        foregroundColor: AppColors.primaryLight,
+                        onPressed: _placesLoading
+                            ? null
+                            : () => _loadPlaces(forceRefresh: true),
+                        child: _placesLoading
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.refresh),
+                      ),
+                    ),
+                    Positioned(
+                      right: AppSpacing.md,
                       bottom: 96,
                       child: FloatingActionButton.small(
                         heroTag: 'safety_map_recenter',
@@ -547,6 +594,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
 class _ErrorState extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
+
   const _ErrorState({required this.message, required this.onRetry});
 
   @override

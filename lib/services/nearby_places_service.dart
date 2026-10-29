@@ -29,9 +29,14 @@ class NearbyPlacesService {
     _cacheData = places;
   }
 
-  Future<List<SafetyMarker>> fetchNearby(double lat, double lng) async {
+  Future<List<SafetyMarker>> fetchNearby(
+    double lat,
+    double lng, {
+    bool forceRefresh = false,
+  }) async {
     final key = '${lat.toStringAsFixed(2)},${lng.toStringAsFixed(2)}';
-    if (_cacheKey == key &&
+    if (!forceRefresh &&
+        _cacheKey == key &&
         _cacheTime != null &&
         DateTime.now().difference(_cacheTime!).inMinutes < _cacheMinutes) {
       return _cacheData;
