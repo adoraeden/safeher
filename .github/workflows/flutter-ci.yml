@@ -1,3 +1,4 @@
+
 name: SafeHer Flutter CI
 
 on:
@@ -10,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  analyze-and-test:
+  analyze-test-build:
     runs-on: ubuntu-latest
 
     steps:
@@ -31,3 +32,14 @@ jobs:
 
       - name: Run Flutter tests
         run: flutter test
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SafeHer-Android-APK
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
