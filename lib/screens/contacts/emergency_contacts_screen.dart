@@ -44,31 +44,78 @@ class _EmergencyContactsScreenState extends State<EmergencyContactsScreen> {
   }
 
   void _confirmDelete(EmergencyContact contact) {
-    showDialog(
+    final messenger = ScaffoldMessenger.of(context);
+
+    showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text('Remove contact?'),
-        content: Text(
-          '${contact.name} will no longer be notified during an SOS.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              _contactsService.deleteContact(contact.id);
-              Navigator.pop(context);
-            },
-            child: const Text(
-              'Remove',
-              style: TextStyle(color: AppColors.danger),
-            ),
-          ),
-        ],
-      ),
+      builder: (dialogContext) {
+        var isDeleting = false;
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: AppColors.surface,
+              title: const Text('Remove contact?'),
+              content: Text(
+                '${contact.name} will no longer be notified during an SOS.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isDeleting
+                      ? null
+                      : () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: isDeleting
+                      ? null
+                      : () async {
+                          setDialogState(() => isDeleting = true);
+
+                          try {
+                            await _contactsService.deleteContact(contact.id);
+
+                            if (!dialogContext.mounted) return;
+
+                            Navigator.pop(dialogContext);
+
+                            if (mounted) {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text('Emergency contact removed.'),
+                                ),
+                              );
+                            }
+                          } catch (e) {
+                            if (!dialogContext.mounted) return;
+
+                            setDialogState(() => isDeleting = false);
+
+                            messenger.showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Could not remove contact: ${e.toString().replaceFirst('Exception: ', '')}',
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                  child: isDeleting
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text(
+                          'Remove',
+                          style: TextStyle(color: AppColors.danger),
+                        ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
