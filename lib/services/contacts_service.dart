@@ -11,15 +11,39 @@ class ContactsService {
     return _firestore.collection('users').doc(uid).collection('contacts');
   }
 
+  // Keep primary contacts first and sort contacts alphabetically
+  // within the same priority.
+  List<EmergencyContact> _sortContacts(Iterable<EmergencyContact> contacts) {
+    final sorted = contacts.toList();
+
+    sorted.sort((a, b) {
+      final aPriority = a.priority == 'primary' ? 0 : 1;
+      final bPriority = b.priority == 'primary' ? 0 : 1;
+
+      final priorityComparison = aPriority.compareTo(bPriority);
+
+      if (priorityComparison != 0) {
+        return priorityComparison;
+      }
+
+      return a.name.trim().toLowerCase().compareTo(b.name.trim().toLowerCase());
+    });
+
+    return sorted;
+  }
+
   Stream<List<EmergencyContact>> watchContacts() {
     return FirebaseAuth.instance.authStateChanges().asyncExpand((user) {
-      if (user == null) return Stream.value(<EmergencyContact>[]);
+      if (user == null) {
+        return Stream.value(<EmergencyContact>[]);
+      }
+
       return _contactsRefFor(user.uid).snapshots().map((snapshot) {
-        final contacts = snapshot.docs
-            .map((doc) => EmergencyContact.fromMap(doc.id, doc.data()))
-            .toList();
-        contacts.sort((a, b) => a.priority == 'primary' ? -1 : 1);
-        return contacts;
+        return _sortContacts(
+          snapshot.docs.map(
+            (doc) => EmergencyContact.fromMap(doc.id, doc.data()),
+          ),
+        );
       });
     });
   }
@@ -33,19 +57,23 @@ class ContactsService {
 
     try {
       final cached = await ref.get(const GetOptions(source: Source.cache));
+
       if (cached.docs.isNotEmpty) {
-        return cached.docs
-            .map((doc) => EmergencyContact.fromMap(doc.id, doc.data()))
-            .toList();
+        return _sortContacts(
+          cached.docs.map(
+            (doc) => EmergencyContact.fromMap(doc.id, doc.data()),
+          ),
+        );
       }
     } catch (_) {
       // No saved copy yet. Fall through to the server.
     }
 
     final snapshot = await ref.get().timeout(const Duration(seconds: 8));
-    return snapshot.docs
-        .map((doc) => EmergencyContact.fromMap(doc.id, doc.data()))
-        .toList();
+
+    return _sortContacts(
+      snapshot.docs.map((doc) => EmergencyContact.fromMap(doc.id, doc.data())),
+    );
   }
 
   Future<void> addContact(EmergencyContact contact) async {
