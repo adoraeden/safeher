@@ -21,7 +21,8 @@ class SafetyMapScreen extends StatefulWidget {
   State<SafetyMapScreen> createState() => _SafetyMapScreenState();
 }
 
-class _SafetyMapScreenState extends State<SafetyMapScreen> {
+class _SafetyMapScreenState extends State<SafetyMapScreen>
+    with WidgetsBindingObserver {
   final _mapController = MapController();
   final _incidentService = IncidentService();
   final _placesService = NearbyPlacesService();
@@ -45,7 +46,47 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadLocation();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _currentLocation == null &&
+        _error != null &&
+        !_isLoading) {
+      _retryLocation();
+    }
+  }
+
+  Future<void> _retryLocation() async {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    await _loadLocation();
+  }
+
+  Future<void> _handleLocationErrorAction() async {
+    final message = _error ?? '';
+
+    if (message.contains('permanently denied')) {
+      await Geolocator.openAppSettings();
+    } else if (message.contains('turned off')) {
+      await Geolocator.openLocationSettings();
+    } else {
+      await _retryLocation();
+    }
   }
 
   Future<void> _loadLocation() async {
@@ -408,16 +449,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-          ? _ErrorState(
-              message: _error!,
-              onRetry: () {
-                setState(() {
-                  _isLoading = true;
-                  _error = null;
-                });
-                _loadLocation();
-              },
-            )
+          ? _ErrorState(message: _error!, onRetry: _handleLocationErrorAction)
           : StreamBuilder<List<IncidentReport>>(
               stream: _incidentService.watchAllReports(),
               builder: (context, incidentSnapshot) {
@@ -620,7 +652,16 @@ class _ErrorState extends StatelessWidget {
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
-            ElevatedButton(onPressed: onRetry, child: const Text('Try again')),
+            ElevatedButton(
+              onPressed: onRetry,
+              child: Text(
+                message.contains('permanently denied')
+                    ? 'Open App Settings'
+                    : message.contains('turned off')
+                    ? 'Open Location Settings'
+                    : 'Try again',
+              ),
+            ),
           ],
         ),
       ),
