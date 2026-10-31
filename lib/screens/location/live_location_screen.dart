@@ -69,9 +69,14 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
 
   /// Fetches actual GPS latitude and longitude, generating a universal map URL.
   Future<void> _fetchCurrentLocation({bool autoShare = false}) async {
+    if (!mounted || _isFetchingLocation) return;
+
     setState(() {
       _isFetchingLocation = true;
       _locationError = null;
+      // Clear any previous fix so it cannot be shared if this request fails.
+      _currentPosition = null;
+      _currentMapUrl = null;
     });
 
     try {
@@ -81,28 +86,32 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
         position.longitude,
       );
 
-      if (mounted) {
-        setState(() {
-          _currentPosition = position;
-          _currentMapUrl = url;
-          _isFetchingLocation = false;
-        });
+      if (!mounted) return;
 
-        if (autoShare) {
-          await _triggerNativeShare(url, position);
-        }
+      setState(() {
+        _currentPosition = position;
+        _currentMapUrl = url;
+        _isFetchingLocation = false;
+      });
+
+      if (autoShare) {
+        await _triggerNativeShare(url, position);
       }
     } catch (e) {
-      if (mounted) {
-        final errorMsg = e.toString().replaceFirst('Exception: ', '');
-        setState(() {
-          _locationError = errorMsg;
-          _isFetchingLocation = false;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(errorMsg), backgroundColor: AppColors.danger),
-        );
-      }
+      if (!mounted) return;
+
+      final errorMsg = e.toString().replaceFirst('Exception: ', '');
+
+      setState(() {
+        _currentPosition = null;
+        _currentMapUrl = null;
+        _locationError = errorMsg;
+        _isFetchingLocation = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(errorMsg), backgroundColor: AppColors.danger),
+      );
     }
   }
 
@@ -114,12 +123,52 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
     }
   }
 
+  Future<void> _shareCurrentLocation() async {
+    await _fetchCurrentLocation();
+
+    if (!mounted) return;
+
+    final position = _currentPosition;
+    final url = _currentMapUrl;
+
+    if (position == null || url == null) return;
+
+    await _triggerNativeShare(url, position);
+  }
+
+  Future<void> _copyCurrentLocation() async {
+    await _fetchCurrentLocation();
+
+    if (!mounted) return;
+
+    final url = _currentMapUrl;
+    if (url == null) return;
+
+    await _copyToClipboard(url);
+  }
+
+  Future<void> _openCurrentLocation() async {
+    await _fetchCurrentLocation();
+
+    if (!mounted) return;
+
+    final url = _currentMapUrl;
+    if (url == null) return;
+
+    await _openMapUrl(url);
+  }
+
   /// Triggers the device's native sharing mechanism.
   Future<void> _triggerNativeShare(String mapUrl, Position? pos) async {
+    if (pos == null) {
+      _snack('Current location is unavailable. Please fetch it again.');
+      return;
+    }
+
     final name = _currentUserName;
     final text = LocationShareService.buildShareMessage(
-      latitude: pos?.latitude ?? 0.0,
-      longitude: pos?.longitude ?? 0.0,
+      latitude: pos.latitude,
+      longitude: pos.longitude,
       name: name,
     );
 
@@ -214,13 +263,20 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
   }
 
   /// SMS button next to one contact.
-  Future<void> _shareViaSms(EmergencyContact contact, String url) =>
-      _sendSmsTo([contact]);
+  Future<void> _shareViaSms(EmergencyContact contact) async {
+    await _fetchCurrentLocation();
+
+    if (!mounted || _currentPosition == null) return;
+
+    await _sendSmsTo([contact]);
+  }
 
   /// One tap: get the GPS location and SMS it to every contact.
   Future<void> _sendToAllContacts() async {
     await _fetchCurrentLocation();
-    if (_currentPosition == null) return; // the error is already shown
+    if (!mounted || _currentPosition == null) {
+      return; // The error is already shown if location retrieval failed.
+    }
     final List<EmergencyContact> contacts = _latestContacts.isNotEmpty
         ? _latestContacts
         : (widget.contactsStream != null
@@ -230,13 +286,20 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
   }
 
   /// Opens WhatsApp with recipient phone and prefilled message.
-  Future<void> _shareViaWhatsApp(EmergencyContact contact, String url) async {
-    final name = _currentUserName;
+  Future<void> _shareViaWhatsApp(EmergencyContact contact) async {
+    await _fetchCurrentLocation();
+
+    if (!mounted) return;
+
+    final position = _currentPosition;
+    if (position == null) return;
+
     final text = LocationShareService.buildShareMessage(
-      latitude: _currentPosition?.latitude ?? 0.0,
-      longitude: _currentPosition?.longitude ?? 0.0,
-      name: name,
+      latitude: position.latitude,
+      longitude: position.longitude,
+      name: _currentUserName,
     );
+
     final cleanPhone = contact.phone.replaceAll(RegExp(r'[^0-9+]'), '');
     final waUri = Uri.parse(
       cleanPhone.isNotEmpty
@@ -479,21 +542,22 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.share, size: 16),
                     label: const Text('Share'),
-                    onPressed: () =>
-                        _triggerNativeShare(_currentMapUrl!, _currentPosition),
+                    onPressed: _isFetchingLocation
+                        ? null
+                        : _shareCurrentLocation,
                   ),
                 ),
                 const SizedBox(width: AppSpacing.sm),
                 IconButton.filledTonal(
                   icon: const Icon(Icons.copy, size: 18),
                   tooltip: 'Copy Link',
-                  onPressed: () => _copyToClipboard(_currentMapUrl!),
+                  onPressed: _isFetchingLocation ? null : _copyCurrentLocation,
                 ),
                 const SizedBox(width: AppSpacing.xs),
                 IconButton.filledTonal(
                   icon: const Icon(Icons.open_in_new, size: 18),
                   tooltip: 'Open in Maps',
-                  onPressed: () => _openMapUrl(_currentMapUrl!),
+                  onPressed: _isFetchingLocation ? null : _openCurrentLocation,
                 ),
               ],
             ),
@@ -503,7 +567,7 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
               child: ElevatedButton.icon(
                 icon: const Icon(Icons.sms_outlined, size: 16),
                 label: const Text('Send to All Contacts by SMS'),
-                onPressed: _sendToAllContacts,
+                onPressed: _isFetchingLocation ? null : _sendToAllContacts,
               ),
             ),
           ] else ...[
@@ -651,14 +715,9 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                           'SMS',
                           style: TextStyle(fontSize: 11),
                         ),
-                        onPressed: () async {
-                          if (_currentMapUrl == null) {
-                            await _fetchCurrentLocation();
-                          }
-                          if (_currentMapUrl != null) {
-                            await _shareViaSms(contact, _currentMapUrl!);
-                          }
-                        },
+                        onPressed: _isFetchingLocation
+                            ? null
+                            : () => _shareViaSms(contact),
                       ),
                       TextButton.icon(
                         style: TextButton.styleFrom(
@@ -670,14 +729,9 @@ class _LiveLocationScreenState extends State<LiveLocationScreen> {
                           'WhatsApp',
                           style: TextStyle(fontSize: 11),
                         ),
-                        onPressed: () async {
-                          if (_currentMapUrl == null) {
-                            await _fetchCurrentLocation();
-                          }
-                          if (_currentMapUrl != null) {
-                            await _shareViaWhatsApp(contact, _currentMapUrl!);
-                          }
-                        },
+                        onPressed: _isFetchingLocation
+                            ? null
+                            : () => _shareViaWhatsApp(contact),
                       ),
                     ],
                   ),
