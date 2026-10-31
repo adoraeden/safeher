@@ -53,18 +53,55 @@ class RouteService {
   static const _walkMetersPerSecond = 5000 / 3600;
 
   Future<RoutePoint?> geocodeAddress(String query) async {
-    final uri = Uri.parse(
-      'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=1',
-    );
-    final response = await http.get(
-      uri,
-      headers: {'User-Agent': 'com.safeher.women_safety (college project)'},
-    );
-    if (response.statusCode != 200) return null;
-    final results = jsonDecode(response.body) as List;
-    if (results.isEmpty) return null;
-    final first = results.first;
-    return RoutePoint(double.parse(first['lat']), double.parse(first['lon']));
+    final trimmedQuery = query.trim();
+
+    if (trimmedQuery.isEmpty) return null;
+
+    final uri = Uri.https('nominatim.openstreetmap.org', '/search', {
+      'q': trimmedQuery,
+      'format': 'json',
+      'limit': '1',
+    });
+
+    try {
+      final response = await http
+          .get(
+            uri,
+            headers: {
+              'User-Agent': 'com.safeher.women_safety (college project)',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200) return null;
+
+      final decoded = jsonDecode(response.body);
+
+      if (decoded is! List || decoded.isEmpty) return null;
+
+      final first = decoded.first;
+
+      if (first is! Map) return null;
+
+      final latitude = double.tryParse(first['lat']?.toString() ?? '');
+      final longitude = double.tryParse(first['lon']?.toString() ?? '');
+
+      if (latitude == null || longitude == null) return null;
+
+      if (!latitude.isFinite ||
+          !longitude.isFinite ||
+          latitude < -90 ||
+          latitude > 90 ||
+          longitude < -180 ||
+          longitude > 180) {
+        return null;
+      }
+
+      return RoutePoint(latitude, longitude);
+    } catch (_) {
+      // Return no result if the server times out or returns invalid data.
+      return null;
+    }
   }
 
   Future<Map<String, dynamic>?> _fetchRoute(
