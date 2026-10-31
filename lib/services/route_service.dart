@@ -12,6 +12,7 @@ enum TravelMode { walk, car }
 class RoutePoint {
   final double lat;
   final double lng;
+
   RoutePoint(this.lat, this.lng);
 }
 
@@ -22,6 +23,7 @@ class RouteCheckResult {
   final int nearbyReportCount;
   final String safetyNote;
   final TravelMode mode;
+  final bool incidentDataAvailable;
 
   RouteCheckResult({
     required this.path,
@@ -30,6 +32,7 @@ class RouteCheckResult {
     required this.nearbyReportCount,
     required this.safetyNote,
     this.mode = TravelMode.walk,
+    this.incidentDataAvailable = true,
   });
 }
 
@@ -124,15 +127,26 @@ class RouteService {
       duration = serverDuration > 0 ? serverDuration : distance / 7.0;
     }
 
-    final reports = await _incidentService.getRecentReports(withinDays: 30);
-    final nearbyCount = _countReportsNearPath(
-      coords,
-      reports,
-      bufferMeters: 200,
-    );
+    var incidentDataAvailable = true;
+    var nearbyCount = 0;
+
+    try {
+      final reports = await _incidentService
+          .getRecentReports(withinDays: 30)
+          .timeout(const Duration(seconds: 8));
+
+      nearbyCount = _countReportsNearPath(coords, reports, bufferMeters: 200);
+    } catch (_) {
+      incidentDataAvailable = false;
+    }
 
     String note;
-    if (nearbyCount == 0) {
+
+    if (!incidentDataAvailable) {
+      note =
+          'Recent community incident data could not be loaded. '
+          'This route is displayed without a community incident check.';
+    } else if (nearbyCount == 0) {
       note = 'Lower reported incident level along this route, based on available community data.';
     } else if (nearbyCount <= 2) {
       note = 'Some reported activity along this route in the last 30 days.';
@@ -147,6 +161,7 @@ class RouteService {
       nearbyReportCount: nearbyCount,
       safetyNote: note,
       mode: mode,
+      incidentDataAvailable: incidentDataAvailable,
     );
   }
 

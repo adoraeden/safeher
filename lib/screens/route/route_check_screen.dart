@@ -1012,7 +1012,9 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
 
   Widget _buildResultCard() {
     final result = _result!;
-    final color = _noteColor(result.nearbyReportCount);
+    final color = result.incidentDataAvailable
+        ? _noteColor(result.nearbyReportCount)
+        : AppColors.textSecondary;
     final isCar = result.mode == TravelMode.car;
     final tooFarToWalk = !isCar && result.distanceMeters > 20000;
 
@@ -1062,7 +1064,9 @@ class _RouteCheckScreenState extends State<RouteCheckScreen> {
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  '${result.nearbyReportCount} report${result.nearbyReportCount == 1 ? '' : 's'} nearby',
+                  result.incidentDataAvailable
+                      ? '${result.nearbyReportCount} report${result.nearbyReportCount == 1 ? '' : 's'} nearby'
+                      : 'Incident data unavailable',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
