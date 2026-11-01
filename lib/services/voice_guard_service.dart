@@ -277,9 +277,36 @@ class VoiceGuardService {
     }
 
     _eventSub?.cancel();
+    _eventSub?.cancel();
+
     _eventSub = _events.receiveBroadcastStream().listen(
       _handleEvent,
-      onError: (Object e) => debugPrint('[VoiceGuard] Event stream error: $e'),
+      onError: (Object error) {
+        debugPrint('[VoiceGuard] Event stream error: $error');
+
+        // Mark Voice Guard as unavailable.
+        _isActive = false;
+        _isListening = false;
+        _isPaused = false;
+
+        // Request the native service to stop and release the microphone.
+        _invoke('stop');
+
+        // Release the event subscription.
+        final subscription = _eventSub;
+        _eventSub = null;
+        subscription?.cancel();
+
+        // Update the UI and notify the user.
+        debugInfo.value = 'Error: Voice Guard communication failed';
+
+        _onStatusChanged?.call('error');
+
+        _onError?.call(
+          'Voice Guard lost communication with its listening service. '
+          'Please turn Voice Guard off and on again.',
+        );
+      },
     );
 
     try {
