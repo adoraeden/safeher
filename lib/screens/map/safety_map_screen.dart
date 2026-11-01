@@ -31,6 +31,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen>
   List<SafetyMarker> _places = [];
   bool _placesLoading = false;
   String? _placesError;
+  DateTime? _placesLastUpdated;
   String _activeFilter = 'all';
   bool _isLoading = true;
   String? _error;
@@ -153,6 +154,7 @@ class _SafetyMapScreenState extends State<SafetyMapScreen>
 
       setState(() {
         _places = places;
+        _placesLastUpdated = DateTime.now();
         _placesLoading = false;
       });
     } catch (e) {
@@ -407,18 +409,43 @@ class _SafetyMapScreenState extends State<SafetyMapScreen>
         ],
       );
     } else if (_placesError != null) {
+      final updatedAt = _placesLastUpdated;
+
+      final timeText = updatedAt == null
+          ? 'previously loaded'
+          : '${updatedAt.hour.toString().padLeft(2, '0')}:'
+                '${updatedAt.minute.toString().padLeft(2, '0')}';
+
       content = Row(
         children: [
           Expanded(
-            child: Text(
-              _placesError!,
-              style: const TextStyle(
-                fontSize: 11,
-                color: AppColors.dangerLight,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _places.isNotEmpty
+                      ? 'Refresh failed. Showing previously loaded places, last updated at $timeText.'
+                      : _placesError!,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppColors.dangerLight,
+                  ),
+                ),
+                if (_places.isNotEmpty)
+                  Text(
+                    _placesError!,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+              ],
             ),
           ),
-          TextButton(onPressed: _loadPlaces, child: const Text('Retry')),
+          TextButton(
+            onPressed: _placesLoading ? null : _loadPlaces,
+            child: const Text('Retry'),
+          ),
         ],
       );
     } else {
