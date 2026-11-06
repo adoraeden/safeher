@@ -226,6 +226,54 @@ On-device, rule-based score (verify exact formula and capping in code). An exper
 - Google Play restricts `SEND_SMS` — sideloaded APK is the realistic demo path.
 
 ---
+## 📱 SafeHer — Application Screenshots
+
+Explore the key features and user experience of SafeHer.
+
+### 1. Authentication
+Account login and registration screens.
+
+![SafeHer Authentication](docs/screenshots/authentication.jpeg)
+
+### 2. Voice Enrollment
+Users enroll their voice and configure their emergency trigger phrase.
+
+![Voice Enrollment](docs/screenshots/voice_enrollment.jpeg)
+
+### 3. Hazard Reporting
+Users can submit reports about hazards and unsafe incidents.
+
+![Hazard Reporting](docs/screenshots/hazard_report.jpeg)
+
+### 4. SOS Emergency Activation
+The emergency alert screen when an SOS is triggered.
+
+![SOS Active](docs/screenshots/sos_active.jpeg)
+
+### 5. Location Sharing
+Displays the user's location and location-sharing functionality.
+
+![Location Sharing](docs/screenshots/location_sharing.jpeg)
+
+### 6. Safety Map
+Nearby safety-related places and community-reported locations.
+
+![Safety Map](docs/screenshots/safety_map.jpeg)
+
+### 7. Gemini AI Assistant
+AI-powered assistance for safety-related questions and guidance.
+
+![Gemini AI Assistant](docs/screenshots/gemini_assistant.jpeg)
+
+### 8. Safety Tips
+Practical safety guidance available within the application.
+
+![Safety Tips](docs/screenshots/safety_tips.jpeg)
+
+### 9. Profile & Settings
+User profile information and application settings.
+
+![Profile and Settings](docs/screenshots/profile_settings.jpeg)
 
 ## Testing checklist
 
