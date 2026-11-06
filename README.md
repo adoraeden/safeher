@@ -228,47 +228,50 @@ On-device, rule-based score (verify exact formula and capping in code). An exper
 ---
 ## 📱 SafeHer — Application Screenshots
 
-Explore the key features and user experience of SafeHer.
-
-### 1. Authentication
-Account login and registration screens.
-
-![SafeHer Authentication](docs/screenshots/authentication.jpeg)
-
-### 2. Voice Enrollment
-Users enroll their voice and configure their emergency trigger phrase.
-
-![Voice Enrollment](docs/screenshots/voice_enrollment.jpeg)
-
-### 3. Hazard Reporting
-Users can submit reports about hazards and unsafe incidents.
-
-![Hazard Reporting](docs/screenshots/hazard_report.jpeg)
-
-### 4. SOS Emergency Activation
-The emergency alert screen when an SOS is triggered.
-
-![SOS Active](docs/screenshots/sos_active.jpeg)
-
-### 5. Location Sharing
-Displays the user's location and location-sharing functionality.
-
-![Location Sharing](docs/screenshots/location_sharing.jpeg)
-
-### 6. Safety Map
-Nearby safety-related places and community-reported locations.
-
-![Safety Map](docs/screenshots/safety_map.jpeg)
-
-### 7. Gemini AI Assistant
-AI-powered assistance for safety-related questions and guidance.
-
-![Gemini AI Assistant](docs/screenshots/gemini_assistant.jpeg)
-
-### 8. Safety Tips
-Practical safety guidance available within the application.
-
-![Safety Tips](docs/screenshots/safety_tips.jpeg)
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/authentication.png" width="190" alt="Authentication"><br>
+      <b>1. Authentication</b>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/voice_enrollment.png" width="190" alt="Voice Enrollment"><br>
+      <b>2. Voice Enrollment</b>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/hazard_report.png" width="190" alt="Hazard Reporting"><br>
+      <b>3. Hazard Reporting</b>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/sos_active.png" width="190" alt="SOS Active"><br>
+      <b>4. SOS Activation</b>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/location_sharing.png" width="190" alt="Location Sharing"><br>
+      <b>5. Location Sharing</b>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/safety_map.png" width="190" alt="Safety Map"><br>
+      <b>6. Safety Map</b>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/gemini_assistant.png" width="190" alt="Gemini AI Assistant"><br>
+      <b>7. Gemini AI Assistant</b>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/safety_tips.png" width="190" alt="Safety Tips"><br>
+      <b>8. Safety Tips</b>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/profile_settings.png" width="190" alt="Profile and Settings"><br>
+      <b>9. Profile & Settings</b>
+    </td>
+  </tr>
+</table>
 
 ### 9. Profile & Settings
 User profile information and application settings.
