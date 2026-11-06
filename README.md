@@ -273,10 +273,6 @@ On-device, rule-based score (verify exact formula and capping in code). An exper
   </tr>
 </table>
 
-### 9. Profile & Settings
-User profile information and application settings.
-
-![Profile and Settings](docs/screenshots/profile_settings.jpeg)
 
 ## Testing checklist
 
